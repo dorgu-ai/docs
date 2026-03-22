@@ -1,0 +1,218 @@
+---
+title: "Cluster Onboarding"
+description: "Bootstrap a production-ready Kubernetes stack with Dorgu"
+---
+
+## Prerequisites
+
+Before onboarding a cluster, ensure you have:
+
+- A running Kubernetes cluster (local or cloud)
+- `kubectl` installed and configured to reach the cluster
+- `helm` v3 installed
+
+## Environment Options
+
+Choose a cluster environment based on your use case:
+
+| Option | Best For | Command |
+|--------|----------|---------|
+| **Kind** | Quick local testing | `kind create cluster --name dorgu-dev` |
+| **vCluster** | Isolated testing on an existing cluster | `vcluster create dorgu-dev -n dorgu-vcluster && vcluster connect dorgu-dev` |
+| **Cloud** | Full integration testing | Point `kubectl` at your EKS, GKE, or AKS cluster |
+
+<Tip>
+  vCluster avoids TLS certificate issues that are common with Kind behind corporate proxies. It creates a lightweight virtual cluster inside your existing cluster, giving you full isolation without provisioning new infrastructure.
+</Tip>
+
+## Onboarding Steps
+
+<Steps>
+  <Step title="Install the CLI">
+    Install Dorgu via `go install`:
+
+    ```bash
+    go install github.com/dorgu-ai/dorgu@latest
+    ```
+
+    Verify the installation:
+
+    ```bash
+    dorgu version
+    ```
+  </Step>
+
+  <Step title="Install the Dorgu Operator">
+    The operator manages ClusterPersona and ApplicationPersona CRDs on your cluster. Install it via Helm:
+
+    ```bash
+    helm repo add dorgu https://dorgu-ai.github.io/dorgu-operator
+    helm repo update
+    helm install dorgu-operator dorgu/dorgu-operator \
+      --namespace dorgu-system \
+      --create-namespace
+    ```
+  </Step>
+
+  <Step title="Create a ClusterPersona">
+    Initialize a ClusterPersona resource that captures your cluster's operational identity:
+
+    ```bash
+    dorgu cluster init --name my-cluster --environment development
+    ```
+
+    This discovers cluster metadata (nodes, Kubernetes version, platform type, installed add-ons) and creates the ClusterPersona CRD.
+
+    Available environments: `development`, `staging`, `production`, `sandbox`.
+  </Step>
+
+  <Step title="Run the setup wizard">
+    Install the blessed stack of production-ready infrastructure components:
+
+    ```bash
+    dorgu cluster setup
+    ```
+
+    The setup command reads the ClusterPersona to determine the cluster environment and tailors component configuration accordingly (resource sizing, replica counts, storage classes).
+
+    To preview what will be installed without making changes:
+
+    ```bash
+    dorgu cluster setup --dry-run
+    ```
+  </Step>
+
+  <Step title="Verify the cluster">
+    Check that all components are healthy:
+
+    ```bash
+    dorgu cluster status
+    ```
+
+    This reports node capacity, Kubernetes version, platform type, installed add-ons, namespace summary, and ApplicationPersona count.
+  </Step>
+</Steps>
+
+## Verify Operator Installation
+
+Confirm that the operator pods are running and CRDs are registered:
+
+```bash
+# Check operator pods
+kubectl get pods -n dorgu-system
+
+# Verify CRDs are registered
+kubectl get crds | grep dorgu.io
+```
+
+You should see two CRDs:
+
+```
+applicationpersonas.dorgu.io
+clusterpersonas.dorgu.io
+```
+
+## Blessed Stack
+
+The `dorgu cluster setup` command installs a curated set of production-ready components:
+
+| Component | Description |
+|-----------|-------------|
+| **cert-manager** | Automated TLS certificate management via Let's Encrypt or internal CAs |
+| **ingress-nginx** | HTTP/S ingress controller for routing external traffic |
+| **CloudNativePG** | PostgreSQL operator, required by OpenObserve for metadata storage |
+| **OpenObserve** | Unified observability platform — logs, metrics, and traces in one tool |
+| **Argo CD** | Declarative GitOps continuous delivery engine |
+| **External Secrets** | Sync secrets from cloud stores (AWS Secrets Manager, Vault, GCP Secret Manager) — optional |
+
+Components are installed in dependency order. For example, cert-manager is installed before ingress-nginx (which needs TLS), and CloudNativePG is installed before OpenObserve (which needs PostgreSQL).
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Operator pods are in CrashLoopBackOff">
+    Check the operator logs for errors:
+
+    ```bash
+    kubectl logs -n dorgu-system -l app.kubernetes.io/name=dorgu-operator --tail=50
+    ```
+
+    Common causes:
+    - **Insufficient RBAC** — The operator service account needs cluster-wide permissions to watch CRDs. Re-run the Helm install to ensure RBAC resources are created.
+    - **CRD version mismatch** — If you upgraded the operator, delete and re-apply CRDs: `kubectl apply -f https://github.com/dorgu-ai/dorgu-operator/releases/latest/download/crds.yaml`
+  </Accordion>
+
+  <Accordion title="ClusterPersona creation fails with 'resource not found'">
+    The CRDs may not be registered. Install them manually:
+
+    ```bash
+    kubectl apply -f https://github.com/dorgu-ai/dorgu-operator/releases/latest/download/crds.yaml
+    ```
+
+    Then retry:
+
+    ```bash
+    dorgu cluster init --name my-cluster --environment development
+    ```
+  </Accordion>
+
+  <Accordion title="Helm install times out for a blessed stack component">
+    Some components (especially OpenObserve with CloudNativePG) take longer to become ready. Re-run setup with verbose output to see real-time progress:
+
+    ```bash
+    dorgu cluster setup --verbose
+    ```
+
+    If a specific component fails, check its namespace for pending pods:
+
+    ```bash
+    kubectl get pods -n cert-manager
+    kubectl get pods -n ingress-nginx
+    kubectl get pods -n cnpg-system
+    kubectl get pods -n openobserve
+    kubectl get pods -n argocd
+    ```
+  </Accordion>
+
+  <Accordion title="Kind cluster TLS or networking issues">
+    Kind clusters run inside Docker and may have networking limitations, especially behind corporate proxies. Consider using vCluster instead:
+
+    ```bash
+    vcluster create dorgu-dev -n dorgu-vcluster
+    vcluster connect dorgu-dev
+    ```
+
+    If you need to stick with Kind, ensure your Docker daemon has access to the internet and that no proxy settings interfere with Helm chart downloads.
+  </Accordion>
+
+  <Accordion title="dorgu cluster status shows no add-ons detected">
+    The operator discovers add-ons by scanning namespaces for known deployments. If you installed components before the operator, restart the operator to trigger a re-scan:
+
+    ```bash
+    kubectl rollout restart deployment -n dorgu-system dorgu-operator
+    ```
+
+    Wait a few seconds and re-check:
+
+    ```bash
+    dorgu cluster status
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="GitOps Mode" icon="git-alt" href="/cli/guides/gitops-mode">
+    Scaffold an ArgoCD App-of-Apps repository instead of imperative Helm install.
+  </Card>
+  <Card title="Manifest Generation" icon="wand-magic-sparkles" href="/cli/guides/manifest-generation">
+    Deep dive into how Dorgu analyzes apps and generates manifests.
+  </Card>
+  <Card title="Cluster Commands" icon="terminal" href="/cli/commands/cluster">
+    Full reference for dorgu cluster init and dorgu cluster status.
+  </Card>
+  <Card title="Cluster Setup" icon="server" href="/cli/commands/cluster-setup">
+    All flags and options for dorgu cluster setup.
+  </Card>
+</CardGroup>

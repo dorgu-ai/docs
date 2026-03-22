@@ -1,0 +1,70 @@
+---
+title: dorgu sync
+description: Query and pull persona state from the Dorgu Operator
+---
+
+## Synopsis
+
+```bash
+dorgu sync <subcommand> [flags]
+```
+
+Query the Dorgu Operator for current sync state and pull the latest persona data. Unlike `watch`, which streams continuously, `sync` performs one-shot queries and returns.
+
+All subcommands require the Dorgu Operator to be running with WebSocket support enabled (`websocket.enabled=true` in the Helm values).
+
+## Subcommands
+
+### sync status
+
+```bash
+dorgu sync status
+```
+
+Connect to the operator and display the current sync health. Shows whether the operator is reachable, the number of personas being managed, and any active reconciliation issues. No additional flags beyond the common flags.
+
+### sync pull
+
+```bash
+dorgu sync pull [flags]
+```
+
+Pull the latest persona data from the operator. Retrieves the current state of ApplicationPersona resources and displays them locally. Optionally filter by namespace.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-n`, `--namespace` | string | | Filter pulled personas to a specific namespace |
+
+## Common flags
+
+These flags apply to all `sync` subcommands:
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--operator-url` | string | `ws://localhost:9090/ws` | WebSocket URL of the Dorgu Operator |
+
+<Warning>
+  The `sync` command requires the Dorgu Operator to be running with `websocket.enabled=true` in the Helm values. If the operator is not reachable or WebSocket support is disabled, the command will fail to connect.
+</Warning>
+
+## Examples
+
+**Check sync health:**
+```bash
+dorgu sync status
+```
+
+**Pull all personas:**
+```bash
+dorgu sync pull
+```
+
+**Pull personas from a specific namespace:**
+```bash
+dorgu sync pull --namespace production
+```
+
+**Use a custom operator URL:**
+```bash
+dorgu sync status --operator-url ws://operator.dorgu.svc:9090/ws
+```

@@ -1,0 +1,128 @@
+---
+title: dorgu persona
+description: Manage ApplicationPersona CRDs — generate, apply, and monitor persona resources on your cluster
+---
+
+## Overview
+
+The `dorgu persona` command group manages **ApplicationPersona** custom resources. An ApplicationPersona is a Kubernetes CRD that captures the operational identity of your application — its resource requirements, scaling behavior, health characteristics, and deployment preferences — as a declarative, version-controlled resource.
+
+The workflow is: **generate** a persona YAML from your application source, **apply** it to the cluster, and **check status** to verify the operator has reconciled it.
+
+## persona generate
+
+### Synopsis
+
+```bash
+dorgu persona generate [path] [flags]
+```
+
+Analyze an application directory and produce an `ApplicationPersona` YAML manifest. The path should point to a directory containing a `Dockerfile` or `docker-compose.yml`. Defaults to `.` if omitted.
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-n`, `--namespace` | string | `default` | Target Kubernetes namespace |
+| `-o`, `--output` | string | `.` | Output directory for `persona.yaml` |
+| `--dry-run` | bool | `false` | Print to stdout without writing files |
+| `--llm-provider` | string | — | LLM provider for analysis (`openai`, `anthropic`, `gemini`, `ollama`) |
+| `--name` | string | auto-detected | Override application name |
+
+### Examples
+
+```bash
+# Generate persona for the current directory
+dorgu persona generate
+
+# Generate from a specific app directory
+dorgu persona generate ./my-app
+
+# Preview without writing files
+dorgu persona generate . --dry-run
+
+# Custom output directory and namespace
+dorgu persona generate ./my-app -o ./manifests -n production
+
+# Use LLM-enhanced analysis
+dorgu persona generate . --llm-provider openai
+
+# Override the application name
+dorgu persona generate . --name order-service
+```
+
+## persona apply
+
+### Synopsis
+
+```bash
+dorgu persona apply [path] [flags]
+```
+
+Analyze an application and apply the resulting `ApplicationPersona` directly to the cluster. This combines the generate and `kubectl apply` steps into a single command. The path defaults to `.` if omitted.
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-n`, `--namespace` | string | `default` | Target Kubernetes namespace |
+| `--llm-provider` | string | — | LLM provider for analysis (`openai`, `anthropic`, `gemini`, `ollama`) |
+| `--name` | string | auto-detected | Override application name |
+
+### Examples
+
+```bash
+# Analyze and apply persona for the current directory
+dorgu persona apply
+
+# Apply from a specific directory to a namespace
+dorgu persona apply ./my-app -n staging
+
+# Apply with LLM-enhanced analysis
+dorgu persona apply . --llm-provider anthropic
+
+# Apply with a custom name
+dorgu persona apply . --name payment-api -n commerce
+```
+
+## persona status
+
+### Synopsis
+
+```bash
+dorgu persona status <name> [flags]
+```
+
+Check the reconciliation status of an `ApplicationPersona` by name. Requires exactly one argument: the persona name.
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-n`, `--namespace` | string | `default` | Kubernetes namespace to query |
+
+### Examples
+
+```bash
+# Check status of a persona in the default namespace
+dorgu persona status my-app
+
+# Check status in a specific namespace
+dorgu persona status order-service -n production
+```
+
+## Status fields
+
+The `persona status` command reports the following fields from the `ApplicationPersona` resource:
+
+| Field | Values | Description |
+|-------|--------|-------------|
+| `.status.phase` | `Pending`, `Active`, `Degraded`, `Unknown` | Current reconciliation phase |
+| `.status.validation.passed` | `true` / `false` | Whether the persona passed validation |
+| `.status.validation.issues` | list of strings | Validation issues found by the operator |
+| `.status.health.status` | string | Overall health status of the application |
+| `.status.health.replicas` | integer | Number of running replicas observed |
+
+<Note>
+  Requires the Dorgu Operator installed on the cluster with the `ApplicationPersona` CRD registered. See the [Operator installation guide](/operator/installation) for setup instructions.
+</Note>

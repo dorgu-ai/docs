@@ -1,0 +1,39 @@
+---
+title: Operator Documentation
+description: Dorgu Operator for Kubernetes cluster-side validation and discovery
+---
+
+# Dorgu Operator
+
+The Dorgu Operator is a Kubernetes operator that provides cluster-side validation, discovery, and persona lifecycle management.
+
+## What it does
+
+- **ApplicationPersona validation** — Validates deployments against persona constraints (resource limits, replicas, health probes, security context)
+- **ClusterPersona discovery** — Automatically discovers cluster state including nodes, add-ons, resource usage, and platform type
+- **ArgoCD integration** — Watches ArgoCD Applications and syncs status into persona CRDs
+- **Prometheus baseline learning** — Queries Prometheus for resource usage metrics to establish baselines
+- **Validating webhook** — Optionally intercept deployments at apply time (advisory or enforcing mode)
+- **WebSocket server** — Real-time updates for `dorgu watch` and `dorgu sync` CLI commands
+
+<Note>
+  **Non-invasive design** — The operator reads and validates only; it never creates or modifies workload resources (Deployments, Services).
+</Note>
+
+## Installation
+
+```bash
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  --version 0.2.0 \
+  --namespace dorgu-system \
+  --create-namespace
+```
+
+## Documentation
+
+Full operator documentation is coming soon. In the meantime, see:
+
+- [Operator README on GitHub](https://github.com/dorgu-ai/dorgu-operator)
+- [CRD Specification](/cli/architecture/crds) for ApplicationPersona and ClusterPersona schemas
+- [Working with Personas](/cli/guides/working-with-personas) for the persona lifecycle
+- [Data Flow](/cli/architecture/data-flow) for operator interaction diagrams

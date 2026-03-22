@@ -1,0 +1,63 @@
+---
+title: Installation
+description: Install the Dorgu CLI
+---
+
+## Go install (recommended)
+
+Install the latest release using `go install`:
+
+```bash
+go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest
+```
+
+Or install a specific version:
+
+```bash
+go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.4.0
+```
+
+Ensure `$GOPATH/bin` (or `$HOME/go/bin`) is in your `PATH`.
+
+## Binary releases
+
+Download pre-built binaries for Linux, macOS, and Windows from [GitHub Releases](https://github.com/dorgu-ai/dorgu/releases).
+
+Available platforms:
+- Linux (amd64, arm64)
+- macOS / Darwin (amd64, arm64)
+- Windows (amd64)
+
+```bash
+# Example: download and install on Linux amd64
+curl -Lo dorgu https://github.com/dorgu-ai/dorgu/releases/latest/download/dorgu_linux_amd64
+chmod +x dorgu
+sudo mv dorgu /usr/local/bin/
+```
+
+## From source
+
+```bash
+git clone https://github.com/dorgu-ai/dorgu.git
+cd dorgu
+make build    # builds to ./build/dorgu
+make install  # installs to $GOPATH/bin
+```
+
+## Verify installation
+
+```bash
+dorgu version
+```
+
+Expected output:
+
+```
+dorgu version v0.4.0 (commit: abc1234, built: 2026-03-22T00:00:00Z)
+```
+
+## Next steps
+
+<Card title="Quickstart" icon="rocket" href="/cli/quickstart">
+  Generate your first Kubernetes manifests in 5 minutes.
+</Card>

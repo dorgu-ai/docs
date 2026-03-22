@@ -1,0 +1,83 @@
+---
+title: dorgu cluster
+description: Initialize and inspect ClusterPersona resources for cluster-wide operational context
+---
+
+## Overview
+
+The `dorgu cluster` command group manages **ClusterPersona** custom resources. A ClusterPersona captures the operational identity of an entire Kubernetes cluster — its environment type, installed add-ons, resource capacity, and platform metadata — as a cluster-scoped CRD.
+
+## cluster init
+
+### Synopsis
+
+```bash
+dorgu cluster init [flags]
+```
+
+Create a `ClusterPersona` resource for the current cluster. This discovers cluster metadata (nodes, version, platform, add-ons) and creates the CRD on the cluster.
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--name` | string | **required** | Cluster name |
+| `--environment` | string | `development` | Cluster environment: `development`, `staging`, `production`, `sandbox` |
+| `--dry-run` | bool | `false` | Print to stdout without applying |
+
+### Examples
+
+```bash
+# Initialize a development cluster
+dorgu cluster init --name my-dev-cluster
+
+# Initialize a production cluster
+dorgu cluster init --name prod-us-east --environment production
+
+# Preview the ClusterPersona without applying
+dorgu cluster init --name staging-eu --environment staging --dry-run
+```
+
+## cluster status
+
+### Synopsis
+
+```bash
+dorgu cluster status [name] [flags]
+```
+
+View the status and discovered metadata of a `ClusterPersona`. If the name is omitted, status is shown for the auto-detected ClusterPersona on the current cluster.
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-n`, `--name` | string | auto-detected | ClusterPersona name |
+
+### Examples
+
+```bash
+# View status of the auto-detected ClusterPersona
+dorgu cluster status
+
+# View status by name
+dorgu cluster status my-dev-cluster
+
+# Explicitly pass the name via flag
+dorgu cluster status -n prod-us-east
+```
+
+## Discovered information
+
+The `cluster status` command reports the following cluster metadata discovered by the operator:
+
+- **Nodes and resource capacity** — node count, total CPU, memory, and allocatable resources
+- **Kubernetes version** — server version reported by the API server
+- **Platform type** — detected platform: Kind, Minikube, EKS, GKE, AKS, or generic
+- **Installed add-ons** — discovered components such as ArgoCD, Prometheus, cert-manager, ingress-nginx
+- **Namespace summary** — count and list of namespaces
+- **ApplicationPersona count** — number of ApplicationPersona resources across the cluster
+
+<Note>
+  Requires the Dorgu Operator installed on the cluster with the `ClusterPersona` CRD registered. See the [Operator installation guide](/operator/installation) for setup instructions.
+</Note>

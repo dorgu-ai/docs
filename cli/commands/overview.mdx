@@ -1,0 +1,67 @@
+---
+title: Command Overview
+description: All Dorgu CLI commands at a glance
+---
+
+## Command tree
+
+```
+dorgu
+├── generate [path]         Analyze app and generate K8s manifests
+├── init [path]             Initialize dorgu configuration
+├── config                  Manage configuration
+│   ├── list                List all config values
+│   ├── get <key>           Get a single config value
+│   ├── set <key> <value>   Set a config value
+│   ├── path                Show config file path
+│   └── reset               Reset to defaults
+├── persona                 Manage ApplicationPersona CRDs
+│   ├── generate [path]     Generate persona YAML
+│   ├── apply [path]        Apply persona to cluster
+│   └── status <name>       Check persona status
+├── cluster                 Manage ClusterPersona CRDs
+│   ├── init                Create a ClusterPersona
+│   ├── status [name]       View cluster status
+│   └── setup               Install production-ready stack
+├── watch                   Real-time streaming (WebSocket)
+│   ├── personas            Watch persona updates
+│   ├── cluster             Watch cluster updates
+│   └── events              Watch validation events
+├── sync                    Query operator state
+│   ├── status              Show sync health
+│   └── pull                Pull latest persona data
+├── platform                Platform management
+│   └── serve               Start web UI dashboard
+└── version                 Show version info
+```
+
+## Global flags
+
+These flags apply to all commands:
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--config` | Path to config file | `.dorgu.yaml` |
+| `--no-color` | Disable colored output | `false` |
+
+## Path argument
+
+Commands that accept a `[path]` argument default to the current directory (`.`) when omitted. The path should point to a directory containing a `Dockerfile` or `docker-compose.yml`.
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | Error (see error message for details) |
+
+## Getting help
+
+```bash
+# General help
+dorgu --help
+
+# Command-specific help
+dorgu generate --help
+dorgu cluster setup --help
+```

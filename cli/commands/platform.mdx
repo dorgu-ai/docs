@@ -1,0 +1,49 @@
+---
+title: dorgu platform serve
+description: Start the Dorgu web UI dashboard
+---
+
+## Synopsis
+
+```bash
+dorgu platform serve [flags]
+```
+
+Start a local web UI dashboard for visualizing ClusterPersona resources. The server watches ClusterPersona resources in the connected Kubernetes cluster and broadcasts real-time updates to the browser via WebSocket.
+
+Once started, the dashboard is available at `http://localhost:PORT` (default port 8080).
+
+## Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-p`, `--port` | string | `8080` | HTTP server port |
+| `--kubeconfig` | string | `$KUBECONFIG` or `~/.kube/config` | Path to kubeconfig file |
+| `--context` | string | current context | Kubernetes context to use |
+| `-v`, `--verbose` | bool | `false` | Enable verbose logging |
+
+## Examples
+
+**Start the dashboard on the default port:**
+```bash
+dorgu platform serve
+```
+
+**Start on a custom port:**
+```bash
+dorgu platform serve --port 3000
+```
+
+**Use a specific kubeconfig and context:**
+```bash
+dorgu platform serve --kubeconfig ~/.kube/staging.yaml --context staging-cluster
+```
+
+**Enable verbose logging for debugging:**
+```bash
+dorgu platform serve --verbose
+```
+
+<Info>
+  The platform is in early development. Features and UI are subject to change.
+</Info>

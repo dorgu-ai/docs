@@ -1,0 +1,115 @@
+---
+title: "Language & Framework Support"
+description: "Languages and frameworks detected by Dorgu's analysis pipeline"
+---
+
+## Supported languages
+
+Dorgu detects the primary language of your application by looking for well-known manifest files in the project root:
+
+| Language | Detection File | Key Identifier |
+|----------|---------------|----------------|
+| JavaScript / Node.js | `package.json` | `package.json` exists |
+| Python | `requirements.txt`, `pyproject.toml`, `setup.py`, `Pipfile` | Any Python manifest present |
+| Go | `go.mod` | `go.mod` exists |
+| Java | `pom.xml` | `pom.xml` exists |
+| Ruby | `Gemfile` | `Gemfile` exists |
+| Rust | `Cargo.toml` | `Cargo.toml` exists |
+
+<Note>
+  If multiple language files are detected (e.g., both `package.json` and `requirements.txt`), Dorgu uses heuristics and the `Dockerfile` base image to determine the primary language.
+</Note>
+
+## Supported frameworks
+
+Once the language is identified, Dorgu inspects dependency manifests to detect the framework in use:
+
+| Framework | Language | Detection Method |
+|-----------|----------|-----------------|
+| Express | Node.js | `"express"` in `package.json` dependencies |
+| Fastify | Node.js | `"fastify"` in `package.json` dependencies |
+| NestJS | Node.js | `"@nestjs/core"` in `package.json` dependencies |
+| FastAPI | Python | `"fastapi"` in requirements |
+| Django | Python | `"django"` in requirements |
+| Flask | Python | `"flask"` in requirements |
+| Gin | Go | `"github.com/gin-gonic/gin"` in `go.mod` |
+| Echo | Go | `"github.com/labstack/echo"` in `go.mod` |
+| Spring Boot | Java | `spring-boot` in `pom.xml` |
+| Rails | Ruby | `"rails"` in `Gemfile` |
+| Actix | Rust | `"actix-web"` in `Cargo.toml` |
+
+Framework detection influences the generated manifests — for example, a Spring Boot app gets a default port of `8080` and JVM-appropriate resource limits, while an Express app defaults to port `3000` with lower memory requirements.
+
+## Health endpoint detection
+
+Dorgu scans your source code for common health endpoint patterns. When found, these are used to configure liveness and readiness probes in the generated Kubernetes manifests.
+
+Detected endpoints:
+
+- `/health`
+- `/healthz`
+- `/ping`
+- `/ready`
+- `/readyz`
+- `/livez`
+- `/status`
+
+The scanner looks for route registrations in your source code (e.g., `app.get("/health", ...)` in Express, `@app.get("/health")` in FastAPI, `r.GET("/health", ...)` in Gin). If multiple health endpoints are found, Dorgu uses `/healthz` or `/health` for liveness and `/readyz` or `/ready` for readiness probes.
+
+## Metrics endpoint detection
+
+Dorgu also checks for Prometheus-compatible metrics endpoints:
+
+- `/metrics`
+- `/prometheus`
+
+When a metrics endpoint is detected, the generated manifests include Prometheus scrape annotations on the pod template:
+
+```yaml
+annotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+```
+
+## Dependency extraction
+
+Dorgu reads dependencies from each language's standard manifest file to understand the application's technology stack:
+
+| Language | Manifest File | What is extracted |
+|----------|--------------|-------------------|
+| Node.js | `package.json` | `dependencies` and `devDependencies` |
+| Python | `requirements.txt` | Package names and version specifiers |
+| Go | `go.mod` | `require` block entries |
+| Java | `pom.xml` | `<dependency>` elements |
+| Ruby | `Gemfile` | `gem` declarations |
+| Rust | `Cargo.toml` | `[dependencies]` table entries |
+
+Extracted dependencies are used for framework detection, identifying database drivers (to suggest appropriate resource limits), and populating the persona's dependency metadata.
+
+## LLM-enhanced detection
+
+When using the `--llm-provider` flag, the LLM augments static analysis with deeper understanding:
+
+```bash
+dorgu generate . --llm-provider openai
+```
+
+The LLM can identify:
+
+- **Frameworks not in the static detection list** — less common or newer frameworks
+- **Architectural patterns** — microservice vs monolith, event-driven, CQRS
+- **Resource sizing recommendations** — based on the application's actual code patterns
+- **Security practices** — identifying sensitive data handling, authentication mechanisms
+
+LLM analysis results are merged with static analysis — static detection always takes precedence for known frameworks to ensure deterministic behavior.
+
+## Adding support
+
+Framework detection logic lives in `internal/analyzer/code.go` in the Dorgu CLI repository. To add support for a new language or framework:
+
+1. Add the detection file to the language detection map
+2. Add the framework's dependency identifier to the framework detection map
+3. Add default port and resource recommendations for the framework
+
+Contributions are welcome — see the [contributing guide](https://github.com/dorgu-platform/dorgu/blob/main/CONTRIBUTING.md) for details.

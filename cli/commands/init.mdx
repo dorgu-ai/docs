@@ -1,0 +1,127 @@
+---
+title: dorgu init
+description: Initialize dorgu configuration for an application or globally
+---
+
+## Synopsis
+
+```bash
+dorgu init [path] [flags]
+```
+
+Initialize a dorgu configuration file. When run without `--global`, creates an app-level `.dorgu.yaml` in the target directory. When run with `--global`, sets up the global configuration at `~/.config/dorgu/config.yaml` through an interactive prompt.
+
+The `[path]` argument defaults to `.` (current directory) if omitted.
+
+## Description
+
+The `init` command is the starting point for using dorgu. It supports two modes:
+
+- **App-level init** (default) — Creates a `.dorgu.yaml` in the specified directory, scoped to a single application. Use `--minimal` for a bare-bones config or `--full` for every available option with inline comments.
+- **Global init** (`--global`) — Walks you through an interactive setup to configure your LLM provider, API key, default namespace, container registry, and org name. The result is saved to `~/.config/dorgu/config.yaml` and applies to all projects unless overridden by app-level config.
+
+## Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--minimal` | bool | `false` | Create minimal configuration with only essential fields |
+| `--full` | bool | `false` | Create full configuration with all options and inline documentation |
+| `--force` | bool | `false` | Overwrite existing configuration file if one already exists |
+| `--global` | bool | `false` | Initialize global configuration at `~/.config/dorgu/config.yaml` |
+
+<Note>
+  `--minimal` and `--full` only apply to app-level init (without `--global`). If neither is specified, a sensible default configuration is generated.
+</Note>
+
+## App-level init
+
+Running `dorgu init` without `--global` creates a `.dorgu.yaml` file in the target directory. This file lets you customize generation behavior per-application, including output paths, namespace, skip flags, and LLM settings.
+
+```bash
+# Creates .dorgu.yaml in the current directory
+dorgu init
+```
+
+If a `.dorgu.yaml` already exists, the command will exit with an error unless `--force` is passed.
+
+### Minimal vs Full
+
+**Minimal** (`--minimal`) produces a short config with only the fields you are most likely to change:
+
+```bash
+dorgu init --minimal
+```
+
+**Full** (`--full`) includes every available option with descriptive comments, making it a useful reference:
+
+```bash
+dorgu init --full
+```
+
+## Global init
+
+Running `dorgu init --global` starts an interactive setup that prompts you for:
+
+1. **LLM provider** — Choose from `openai`, `anthropic`, `gemini`, or `ollama`
+2. **API key** — Your provider API key (stored in the global config file)
+3. **Default namespace** — Kubernetes namespace used when `--namespace` is not specified
+4. **Container registry** — Default registry for image references (e.g., `ghcr.io`)
+5. **Org name** — Your organization or username, used in image paths
+
+The result is written to `~/.config/dorgu/config.yaml`. These values act as defaults for all dorgu commands and can be overridden per-project via app-level `.dorgu.yaml` or CLI flags.
+
+```bash
+dorgu init --global
+```
+
+<Info>
+  If the global config file already exists, `--force` is required to overwrite it.
+</Info>
+
+<Note>
+  **Config merge order** (highest priority first):
+  CLI flags > App `.dorgu.yaml` > Workspace `.dorgu.yaml` > Global `~/.config/dorgu/config.yaml` > Environment variables > Built-in defaults
+</Note>
+
+## Examples
+
+**Initialize default app config in the current directory:**
+```bash
+dorgu init
+```
+
+**Initialize in a specific project directory:**
+```bash
+dorgu init ./my-app
+```
+
+**Create a minimal config:**
+```bash
+dorgu init --minimal
+```
+
+**Create a full config with all options documented:**
+```bash
+dorgu init --full
+```
+
+**Overwrite an existing config:**
+```bash
+dorgu init --force
+```
+
+**Set up global configuration interactively:**
+```bash
+dorgu init --global
+```
+
+**Re-run global setup (overwrite existing):**
+```bash
+dorgu init --global --force
+```
+
+## Related
+
+- [dorgu config](/cli/commands/config) — View and modify configuration values after initialization
+- [dorgu generate](/cli/commands/generate) — Generate Kubernetes manifests from an analyzed application
+- [Command Overview](/cli/commands/overview) — All CLI commands at a glance

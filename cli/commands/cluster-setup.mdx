@@ -1,0 +1,134 @@
+---
+title: dorgu cluster setup
+description: Install the Dorgu blessed stack — a curated set of production-ready infrastructure components
+---
+
+## Synopsis
+
+```bash
+dorgu cluster setup [flags]
+```
+
+## Description
+
+Install a curated, production-ready infrastructure stack onto your Kubernetes cluster. The `cluster setup` command automates the installation and configuration of battle-tested components that cover TLS, ingress, observability, GitOps, and secrets management.
+
+The command reads the `ClusterPersona` to determine the cluster environment and tailors component configuration accordingly (e.g., resource sizing, replica counts, storage classes).
+
+## Blessed Stack
+
+| Component | Description |
+|-----------|-------------|
+| **cert-manager** | Automated TLS certificate management via Let's Encrypt or internal CAs |
+| **ingress-nginx** | HTTP/S ingress controller for routing external traffic |
+| **CloudNativePG** | PostgreSQL operator, required by OpenObserve for metadata storage |
+| **OpenObserve** | Unified observability platform — logs, metrics, and traces in one tool |
+| **Argo CD** | Declarative GitOps continuous delivery engine |
+| **External Secrets** | Sync secrets from cloud stores (AWS Secrets Manager, Vault, GCP Secret Manager) — optional |
+
+## Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--cluster-persona` | string | auto-detected | ClusterPersona name; auto-detected from the current cluster if not set |
+| `--environment` | string | from ClusterPersona | Environment override: `development`, `staging`, `production` |
+| `--dry-run` | bool | `false` | Print helm commands without executing |
+| `--skip-validation` | bool | `false` | Skip post-install pod health checks |
+| `--driver` | string | `helm` | Installation driver: `helm` or `gitops` |
+| `--gitops-output` | string | `./dorgu-cluster-gitops` | Output directory for GitOps repo scaffold |
+| `--context` | string | current-context | Kube-context to use; defaults to `current-context` |
+| `--verbose` | bool | `false` | Stream real-time Helm output during installation |
+
+## Helm driver
+
+The default `helm` driver performs an imperative installation. Each blessed stack component is installed sequentially via `helm install` (or `helm upgrade --install`) with values tailored to your cluster environment.
+
+The installation order respects dependency chains — for example, cert-manager is installed before ingress-nginx (which needs TLS), and CloudNativePG is installed before OpenObserve (which needs PostgreSQL).
+
+After installation, pod health checks run automatically to verify each component is ready (unless `--skip-validation` is set).
+
+```bash
+# Install the full stack with the default helm driver
+dorgu cluster setup
+
+# Preview what would be installed
+dorgu cluster setup --dry-run
+
+# Install with real-time output
+dorgu cluster setup --verbose
+
+# Install against a specific kube-context
+dorgu cluster setup --context kind-dorgu-dev
+```
+
+## GitOps driver
+
+The `gitops` driver does not install components directly. Instead, it scaffolds a GitOps repository structure using the **ArgoCD App-of-Apps pattern**. You commit this scaffold to your Git repository and let ArgoCD reconcile the desired state.
+
+```bash
+# Scaffold a GitOps repo
+dorgu cluster setup --driver gitops
+
+# Scaffold to a custom directory
+dorgu cluster setup --driver gitops --gitops-output ./infra/cluster-apps
+
+# Preview the scaffold without writing
+dorgu cluster setup --driver gitops --dry-run
+```
+
+### Generated directory structure
+
+```
+dorgu-cluster-gitops/
+├── apps/
+│   └── app-of-apps.yaml            # Root ArgoCD Application
+├── components/
+│   ├── cert-manager/
+│   │   ├── application.yaml        # ArgoCD Application for cert-manager
+│   │   └── values.yaml             # Helm values
+│   ├── ingress-nginx/
+│   │   ├── application.yaml
+│   │   └── values.yaml
+│   ├── cloudnative-pg/
+│   │   ├── application.yaml
+│   │   └── values.yaml
+│   ├── openobserve/
+│   │   ├── application.yaml
+│   │   └── values.yaml
+│   ├── argocd/
+│   │   ├── application.yaml
+│   │   └── values.yaml
+│   └── external-secrets/
+│       ├── application.yaml
+│       └── values.yaml
+└── README.md
+```
+
+## Examples
+
+```bash
+# Full stack install (default helm driver)
+dorgu cluster setup
+
+# Production environment override
+dorgu cluster setup --environment production
+
+# Dry-run to preview helm commands
+dorgu cluster setup --dry-run
+
+# Verbose install with real-time streaming
+dorgu cluster setup --verbose
+
+# Use a specific ClusterPersona
+dorgu cluster setup --cluster-persona prod-us-east
+
+# GitOps scaffold for an existing ArgoCD setup
+dorgu cluster setup --driver gitops --gitops-output ./infra/gitops
+
+# Skip post-install validation for faster iteration
+dorgu cluster setup --skip-validation
+```
+
+<Note>
+  Prerequisites: `kubectl` and `helm` must be available in your `PATH`. The `gitops` driver additionally requires an ArgoCD installation on the target cluster (or you can bootstrap ArgoCD as part of the generated scaffold).
+</Note>

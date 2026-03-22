@@ -1,0 +1,159 @@
+---
+title: "LLM Providers"
+description: "Configure OpenAI, Anthropic, Gemini, or Ollama for enhanced analysis"
+---
+
+# LLM Providers
+
+Dorgu can use large language models to enhance its application analysis. LLM integration provides deeper code understanding, framework-specific recommendations, smarter resource sizing, and security best practices tailored to your stack.
+
+<Info>
+LLM enhancement is **optional**. Dorgu's static analysis and manifest generation work without any LLM provider configured. The LLM layer adds refinements on top of the base analysis.
+</Info>
+
+## Supported Providers
+
+| Provider | Models | Env Variable | Default Model |
+|----------|--------|--------------|---------------|
+| OpenAI | gpt-4, gpt-3.5-turbo | `OPENAI_API_KEY` | gpt-4 |
+| Anthropic | claude-3-sonnet | `ANTHROPIC_API_KEY` | claude-3-sonnet |
+| Gemini | gemini-1.5-pro | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | gemini-1.5-pro |
+| Ollama | any locally hosted model | `OLLAMA_HOST` (endpoint URL) | configurable |
+
+## What LLM Enhances
+
+When an LLM provider is configured, Dorgu uses it to improve several areas of analysis:
+
+- **Deeper code analysis** -- understands business logic, not just file structure
+- **Framework-specific recommendations** -- tailored settings for Express, Spring Boot, Django, etc.
+- **Resource sizing** -- more accurate CPU/memory recommendations based on application patterns
+- **Security best practices** -- context-aware security recommendations beyond generic defaults
+
+---
+
+## OpenAI
+
+### Setup
+
+```bash
+# Option 1: Environment variable
+export OPENAI_API_KEY="sk-proj-..."
+
+# Option 2: Global config
+dorgu config set llm.provider openai
+dorgu config set llm.api_key "sk-proj-..."
+```
+
+### Usage
+
+```bash
+dorgu generate . --llm-provider openai
+```
+
+### Model Override
+
+```bash
+dorgu config set llm.model gpt-3.5-turbo
+```
+
+---
+
+## Anthropic
+
+### Setup
+
+```bash
+# Option 1: Environment variable
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Option 2: Global config
+dorgu config set llm.provider anthropic
+dorgu config set llm.api_key "sk-ant-..."
+```
+
+### Usage
+
+```bash
+dorgu generate . --llm-provider anthropic
+```
+
+---
+
+## Gemini
+
+### Setup
+
+```bash
+# Option 1: Environment variable (either key works)
+export GEMINI_API_KEY="AIza..."
+# or
+export GOOGLE_API_KEY="AIza..."
+
+# Option 2: Global config
+dorgu config set llm.provider gemini
+dorgu config set llm.api_key "AIza..."
+```
+
+### Usage
+
+```bash
+dorgu generate . --llm-provider gemini
+```
+
+---
+
+## Ollama
+
+Ollama lets you run LLMs locally without an API key. You need a running Ollama instance with at least one model pulled.
+
+### Prerequisites
+
+```bash
+# Install Ollama (see https://ollama.ai)
+# Pull a model
+ollama pull llama3
+```
+
+### Setup
+
+```bash
+# Option 1: Environment variable for custom endpoint
+export OLLAMA_HOST="http://localhost:11434"
+
+# Option 2: Global config
+dorgu config set llm.provider ollama
+dorgu config set llm.model llama3
+```
+
+### Usage
+
+```bash
+dorgu generate . --llm-provider ollama
+```
+
+<Note>
+Ollama does not require an API key. The `OLLAMA_HOST` variable is only needed if your Ollama instance runs on a non-default address.
+</Note>
+
+---
+
+## API Key Resolution Order
+
+When Dorgu needs an API key, it checks the following sources in order:
+
+1. **Environment variable** -- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, or `GOOGLE_API_KEY`
+2. **Global config** -- `llm.api_key` in `~/.config/dorgu/config.yaml`
+3. **Interactive prompt** -- if running in a terminal and no key is found, Dorgu prompts you to enter one
+
+## Setting Provider in `.dorgu.yaml`
+
+You can also set the LLM provider at the workspace or app level:
+
+```yaml
+# In .dorgu.yaml
+llm:
+  provider: "openai"
+  model: "gpt-4"
+```
+
+This is useful when different projects require different providers or models.

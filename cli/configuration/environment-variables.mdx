@@ -1,0 +1,73 @@
+---
+title: "Environment Variables"
+description: "All environment variables recognized by Dorgu"
+---
+
+# Environment Variables
+
+Dorgu recognizes several environment variables for configuring LLM providers, Kubernetes access, and runtime behavior. Environment variables sit at priority level 5 in the [configuration hierarchy](/cli/configuration/overview) -- above built-in defaults but below config files and CLI flags.
+
+## Variables Reference
+
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| `OPENAI_API_KEY` | OpenAI API access | `sk-proj-...` |
+| `ANTHROPIC_API_KEY` | Anthropic Claude API access | `sk-ant-...` |
+| `GEMINI_API_KEY` | Google Gemini API access | `AIza...` |
+| `GOOGLE_API_KEY` | Alternative Gemini API key | `AIza...` |
+| `OLLAMA_HOST` | Custom Ollama endpoint URL | `http://localhost:11434` |
+| `KUBECONFIG` | Path to kubeconfig file | `~/.kube/config` |
+
+## Precedence
+
+For **API keys**, environment variables take precedence over the global config file (`~/.config/dorgu/config.yaml`). This makes it easy to override keys per-session or in CI pipelines:
+
+```bash
+# Override the configured API key for this session
+export OPENAI_API_KEY="sk-proj-different-key..."
+dorgu generate .
+```
+
+For **other settings**, the standard [priority order](/cli/configuration/overview) applies: CLI flags and config files override environment variables.
+
+## DORGU_* Prefix
+
+Dorgu uses [Viper](https://github.com/spf13/viper) for configuration management with `AutomaticEnv()` enabled. This means any configuration key can be overridden via an environment variable with the `DORGU_` prefix, using underscores for nested keys:
+
+```bash
+# Override llm.provider via environment
+export DORGU_LLM_PROVIDER="anthropic"
+
+# Override defaults.namespace via environment
+export DORGU_DEFAULTS_NAMESPACE="staging"
+```
+
+<Info>
+The `DORGU_*` prefix variables follow the same naming convention as the config file keys, with dots replaced by underscores and the `DORGU_` prefix added. For example, `llm.model` becomes `DORGU_LLM_MODEL`.
+</Info>
+
+## Usage in CI/CD
+
+Environment variables are the recommended way to configure Dorgu in CI/CD pipelines. Store API keys as secrets and export them before running Dorgu:
+
+```yaml
+# GitHub Actions example
+steps:
+  - name: Generate manifests
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    run: dorgu generate . --output manifests/
+```
+
+```yaml
+# GitLab CI example
+generate:
+  script:
+    - dorgu generate . --output manifests/
+  variables:
+    OPENAI_API_KEY: $OPENAI_API_KEY
+```
+
+<Note>
+When running in CI without a TTY, Dorgu will not prompt for missing API keys. Make sure to set the appropriate environment variable or use the `--llm-provider` flag to explicitly disable LLM enhancement if no key is available.
+</Note>

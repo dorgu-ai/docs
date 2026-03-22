@@ -1,97 +1,65 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: Introduction
+description: AI-powered Kubernetes application onboarding
 ---
 
-## Setting up
+# What is Dorgu?
 
-Get your documentation site up and running in minutes.
+Dorgu analyzes your containerized applications — Dockerfile, docker-compose, and source code — and generates production-ready Kubernetes manifests, ArgoCD configs, CI/CD workflows, and ApplicationPersona CRDs. Pair it with the Dorgu Operator for cluster-side validation, discovery, and real-time insights.
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+## Products
 
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={3}>
+  <Card title="Dorgu CLI" icon="terminal" href="/cli/quickstart">
+    Analyze apps and generate K8s manifests, personas, and CI/CD pipelines from the command line.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Dorgu Operator" icon="gears" href="/operator">
+    Kubernetes operator for deployment validation, cluster discovery, and persona lifecycle management.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Dorgu Platform" icon="browser" href="/platform">
+    Web dashboard for ClusterPersona visualization and cluster insights.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
-  </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## How it works
 
-Everything you need to create world-class documentation.
+```mermaid
+flowchart LR
+    A["Your App"] -->|"Dockerfile, Compose, Code"| B["Analyze"]
+    B -->|"Optional LLM Enhancement"| C["Generate"]
+    C -->|"Manifests, Personas, CI/CD"| D["Validate"]
+    D --> E["Deploy to K8s"]
+```
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+<Steps>
+  <Step title="Analyze">
+    Dorgu parses your Dockerfile, docker-compose.yml, and source code to detect language, framework, ports, health endpoints, dependencies, and resource requirements.
+  </Step>
+  <Step title="Generate">
+    Produces production-ready Kubernetes Deployment, Service, Ingress, HPA, ArgoCD Application, GitHub Actions workflow, and an ApplicationPersona CRD — all from a single command.
+  </Step>
+  <Step title="Validate">
+    Post-generation validation checks resource bounds, port consistency, health probes, security contexts, and optionally runs `kubectl` dry-run against your cluster.
+  </Step>
+</Steps>
 
-## Need inspiration?
+## Key capabilities
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+- **Multi-language analysis** — Node.js, Python, Go, Java, Ruby, Rust with framework detection (Express, FastAPI, Django, Spring, Rails, and more)
+- **LLM-enhanced analysis** — Optional deeper understanding via OpenAI, Anthropic, Gemini, or Ollama
+- **Layered configuration** — Global, workspace, and app-level config with CLI flag overrides
+- **Post-generation validation** — Resource bounds, ports, health probes, HPA, security contexts
+- **ApplicationPersona CRDs** — Living identity documents for your applications, validated by the operator
+- **GitOps support** — ArgoCD App-of-Apps scaffold with `dorgu cluster setup --driver gitops`
+- **Cluster bootstrapping** — Interactive wizard installs a production-ready stack (cert-manager, ingress-nginx, CloudNativePG, OpenObserve, ArgoCD)
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/cli/installation">
+    Install the Dorgu CLI via Go, binary release, or from source.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/cli/quickstart">
+    Generate your first Kubernetes manifests in 5 minutes.
+  </Card>
+</CardGroup>

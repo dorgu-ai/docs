@@ -1,0 +1,118 @@
+---
+title: CI/CD Integration
+description: Use generated GitHub Actions workflows and ArgoCD configs
+---
+
+## Generated GitHub Actions workflow
+
+When you run `dorgu generate`, a GitHub Actions workflow is created at `.github/workflows/deploy.yaml`. This workflow handles building your container image, pushing it to a registry, and deploying to Kubernetes.
+
+Here is the generated workflow with annotations:
+
+```yaml
+name: Build and Deploy
+on:
+  push:
+    branches: [main]        # Triggers on pushes to main
+  pull_request:
+    branches: [main]        # Also runs on PRs targeting main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sets up Docker Buildx for multi-platform builds
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Authenticates with GitHub Container Registry
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Builds the image; only pushes on main branch commits
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.event_name == 'push' }}
+          tags: ghcr.io/my-org/my-app:${{ github.sha }}
+
+      # Deploys to Kubernetes only on main branch
+      - name: Deploy to Kubernetes
+        if: github.ref == 'refs/heads/main'
+        run: |
+          kubectl set image deployment/my-app \
+            my-app=ghcr.io/my-org/my-app:${{ github.sha }}
+```
+
+<Note>
+  The registry, image name, and deployment name are populated from your `.dorgu.yaml` and global config. The example above shows the defaults for a `ghcr.io` registry.
+</Note>
+
+## Customizing the workflow
+
+The generated workflow is a starting point. Common customizations include:
+
+- **Adding a test stage** — insert a step before the build that runs your test suite (`npm test`, `go test ./...`, `pytest`, etc.)
+- **Changing the registry** — update the `registry` field in the login action and image tags to use Docker Hub, AWS ECR, Google Artifact Registry, or any OCI-compatible registry
+- **Adding environment-specific deploys** — duplicate the deploy step with different `if` conditions for staging and production branches
+- **Adding secrets** — use GitHub repository secrets for any credentials beyond the default `GITHUB_TOKEN`
+
+## ArgoCD Application
+
+If ArgoCD is detected on your cluster (via `dorgu cluster init`) or configured in your global config, Dorgu generates an ArgoCD `Application` manifest at `k8s/argocd/application.yaml`:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-app                    # Matches your app name
+  namespace: argocd               # ArgoCD control plane namespace
+spec:
+  project: default                # ArgoCD project (configurable)
+  source:
+    repoURL: https://github.com/my-org/my-app.git  # Auto-detected from git
+    targetRevision: HEAD           # Tracks the latest commit
+    path: k8s                      # Path to Kubernetes manifests
+  destination:
+    server: https://kubernetes.default.svc  # In-cluster API server
+    namespace: default             # Target namespace from config
+  syncPolicy:
+    automated:
+      prune: true                  # Delete resources removed from git
+      selfHeal: true               # Revert manual cluster changes
+    syncOptions:
+      - CreateNamespace=true       # Create namespace if it doesn't exist
+```
+
+## ArgoCD sync policy
+
+The generated ArgoCD Application uses an **automated sync policy** with two key behaviors:
+
+- **Prune** (`prune: true`) — when you remove a manifest from git, ArgoCD automatically deletes the corresponding resource from the cluster. This keeps the cluster in sync with your repository.
+- **Self-heal** (`selfHeal: true`) — if someone manually changes a resource on the cluster (e.g., via `kubectl edit`), ArgoCD reverts it to match the git state. This prevents configuration drift.
+
+Together, these settings enforce a strict GitOps workflow where git is the single source of truth.
+
+## Skipping generation
+
+If you already have CI/CD pipelines or don't want Dorgu to generate them, use the skip flags:
+
+```bash
+# Skip GitHub Actions workflow generation
+dorgu generate . --skip-ci
+
+# Skip ArgoCD Application generation
+dorgu generate . --skip-argocd
+
+# Skip both
+dorgu generate . --skip-ci --skip-argocd
+```
+
+These flags work with both `dorgu generate` and `dorgu persona generate`.

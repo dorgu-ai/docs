@@ -1,0 +1,90 @@
+---
+title: "Global Configuration"
+description: "~/.config/dorgu/config.yaml reference"
+---
+
+# Global Configuration
+
+The global configuration file stores user-level defaults that apply across all workspaces and projects. It is the lowest-priority file-based configuration source (above environment variables and built-in defaults).
+
+## File Location
+
+```
+~/.config/dorgu/config.yaml
+```
+
+## Creating the Global Config
+
+```bash
+dorgu init --global
+```
+
+This creates the global config file with sensible defaults and walks you through setting your LLM provider and API key.
+
+## Managing via CLI
+
+Dorgu provides the `dorgu config` subcommand for managing global configuration without editing the file directly.
+
+```bash
+# List all config values
+dorgu config list
+
+# Get a specific key
+dorgu config get llm.provider
+
+# Set a value
+dorgu config set llm.provider openai
+dorgu config set llm.api_key sk-...
+
+# Show config file path
+dorgu config path
+
+# Reset to defaults
+dorgu config reset
+```
+
+## Configuration Keys
+
+| Key | Type | Description | Example |
+|-----|------|-------------|---------|
+| `llm.provider` | string | LLM provider for enhanced analysis | `openai`, `anthropic`, `gemini`, `ollama` |
+| `llm.api_key` | string | API key for the configured LLM provider | `sk-...` |
+| `llm.model` | string | Model override (uses provider default if unset) | `gpt-4`, `claude-3-sonnet-20240229` |
+| `defaults.namespace` | string | Default Kubernetes namespace for generated manifests | `default` |
+| `defaults.registry` | string | Default container image registry | `ghcr.io/my-org` |
+| `defaults.org_name` | string | Organization name used in labels and naming | `my-company` |
+
+## Example File
+
+```yaml
+llm:
+  provider: "openai"
+  api_key: "sk-proj-abc123..."
+  model: "gpt-4"
+
+defaults:
+  namespace: "default"
+  registry: "ghcr.io/my-org"
+  org_name: "my-company"
+```
+
+<Warning>
+The global config file may contain sensitive values such as API keys. Ensure the file has appropriate permissions (`chmod 600 ~/.config/dorgu/config.yaml`) and do not commit it to version control.
+</Warning>
+
+## Precedence
+
+Global config values are overridden by:
+
+1. **CLI flags** -- always highest priority
+2. **App `.dorgu.yaml`** -- per-application overrides
+3. **Workspace `.dorgu.yaml`** -- per-workspace overrides
+
+Global config values override:
+
+1. **Environment variables** -- for most settings (API keys are an exception; env vars take precedence)
+2. **Built-in defaults** -- the lowest priority
+
+<Info>
+For API keys specifically, environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) take precedence over the global config value. This allows you to store a default key in the config but override it per-session or in CI environments.
+</Info>

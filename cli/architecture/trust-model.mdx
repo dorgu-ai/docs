@@ -1,0 +1,79 @@
+---
+title: "Trust Model"
+description: "Progressive trust levels for Kubernetes automation"
+---
+
+Dorgu uses a progressive trust model that governs how much autonomy the system has over your cluster. Every action Dorgu takes maps to a specific trust level, and the system is designed so you can adopt it incrementally -- starting with zero-risk observation and gradually enabling more automation as confidence grows.
+
+## Progressive Trust Levels
+
+| Level | Name | Description | Who Acts |
+|-------|------|-------------|----------|
+| 0 | OBSERVE | Read cluster state, no writes | Operator |
+| 1 | RECOMMEND | Generate suggestions, human applies | CLI |
+| 2 | PROPOSE | Create PRs/proposals, human approves | CLI + Operator |
+| 3 | DEPLOY-DEV | Deploy to dev/staging, human promotes | Future |
+| 4 | DEPLOY-PROD | Deploy anywhere with approval gates | Future |
+| 5 | AUTONOMOUS | Make decisions without human intervention | Future |
+
+## Current Implementation
+
+Dorgu currently operates at **Levels 0 through 2**.
+
+**CLI (Level 1-2: RECOMMEND / PROPOSE)**
+- Analyzes application source code and generates Kubernetes manifests
+- Produces ApplicationPersona CRDs that describe the desired operational profile
+- Proposes changes by generating files that a human reviews, commits, and deploys through existing GitOps workflows
+
+**Operator (Level 0-2: OBSERVE / RECOMMEND / PROPOSE)**
+- Observes cluster state by watching Deployments, Pods, and integration resources (ArgoCD, Prometheus)
+- Validates running workloads against their ApplicationPersona constraints
+- Recommends improvements by writing suggestions to the persona's `status.recommendations` field
+- Proposes changes through admission webhook warnings (advisory mode) or denials (enforcing mode)
+
+At no point does either the CLI or the Operator autonomously deploy, scale, or modify your workloads.
+
+## Non-Negotiable Invariant
+
+<Warning>
+The Dorgu Operator **never** creates or modifies Deployments, Services, or other workload resources. This is a foundational design constraint, not a configuration option.
+</Warning>
+
+The Operator is permitted to:
+
+- **Read** cluster state (Deployments, Pods, Nodes, ArgoCD Applications, Prometheus metrics)
+- **Validate** workloads against Persona constraints
+- **Recommend** changes via status fields and webhook warnings
+- **Update** Persona CRD status and learned fields
+
+The Operator is **not** permitted to:
+
+- Create, update, or delete Deployments
+- Create, update, or delete Services
+- Modify any workload resource in any way
+
+Deployment remains the responsibility of your existing tools: ArgoCD, Flux, Helm, kubectl, or whatever you use today. Dorgu adds observability and guardrails on top of your existing workflow without replacing any part of it.
+
+## Why Progressive Trust
+
+The progressive trust model exists because automation in production environments must be earned, not assumed.
+
+**Start safe.** Level 0 (OBSERVE) carries zero risk. The Operator only reads cluster state and writes to its own CRD status fields. You can install Dorgu and gain immediate visibility without changing any existing workflow.
+
+**Build confidence.** At Level 1-2 (RECOMMEND / PROPOSE), Dorgu generates suggestions and validates changes, but a human is always in the loop. You see what Dorgu would do before it does anything. Over time, as you validate that Dorgu's recommendations are consistently correct, you develop trust in the system's judgment.
+
+**Enable gradually.** Higher trust levels unlock more automation, but always with explicit opt-in. Moving from one level to the next is a deliberate decision, not an automatic escalation.
+
+This approach mirrors how trust works in any engineering organization: new team members start with limited access, prove their reliability through consistent good judgment, and gradually earn more responsibility.
+
+## Future Levels
+
+Levels 3 through 5 are planned for future phases of Dorgu's development.
+
+**Level 3 (DEPLOY-DEV)** will enable automated deployment to development and staging environments. Changes would still require manual promotion to production, giving teams a low-risk way to experience automated deployments.
+
+**Level 4 (DEPLOY-PROD)** will extend automated deployment to production, but with mandatory approval gates. Deployments would go through a proposal-review-approve workflow before execution.
+
+**Level 5 (AUTONOMOUS)** represents full autonomy, where the system can make deployment decisions without human intervention. This level will require extensive safeguards, including rollback triggers, blast radius limits, and comprehensive observability. It is a long-term goal, not a near-term priority.
+
+Each level will be opt-in per application and per environment, so you can run different trust levels for different workloads based on their criticality and your confidence in the system.

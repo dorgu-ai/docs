@@ -1,0 +1,144 @@
+---
+title: dorgu config
+description: View and manage dorgu configuration values
+---
+
+## Synopsis
+
+```bash
+dorgu config <subcommand> [args]
+```
+
+View, modify, and manage dorgu configuration. The `config` command operates on the global configuration file at `~/.config/dorgu/config.yaml`. Use `dorgu init` to create or re-initialize configuration files.
+
+## Subcommands
+
+| Subcommand | Usage | Description |
+|------------|-------|-------------|
+| `list` | `dorgu config list` | List all configuration values and their current sources |
+| `get` | `dorgu config get <key>` | Get the current value of a specific configuration key |
+| `set` | `dorgu config set <key> <value>` | Set a configuration value |
+| `path` | `dorgu config path` | Show the resolved path to the active configuration file |
+| `reset` | `dorgu config reset` | Reset all configuration values to built-in defaults |
+
+## Configuration keys
+
+| Key | Description | Example |
+|-----|-------------|---------|
+| `llm.provider` | LLM provider to use for analysis | `openai`, `anthropic`, `gemini`, `ollama` |
+| `llm.api_key` | API key for the configured LLM provider | `sk-...` |
+| `llm.model` | Specific model to use (provider-dependent) | `gpt-4o`, `claude-sonnet-4-20250514` |
+| `defaults.namespace` | Default Kubernetes namespace for generated manifests | `production` |
+| `defaults.registry` | Default container image registry | `ghcr.io` |
+| `defaults.org_name` | Organization or username for image paths | `my-org` |
+
+## Config merge order
+
+<Note>
+  **Config merge order** (highest priority first):
+  CLI flags > App `.dorgu.yaml` > Workspace `.dorgu.yaml` > Global `~/.config/dorgu/config.yaml` > Environment variables > Built-in defaults
+</Note>
+
+Values shown by `config list` and `config get` reflect the global config file. App-level overrides (from `.dorgu.yaml`) and CLI flags take effect at runtime but are not displayed by these subcommands.
+
+## LLM API key resolution
+
+The LLM API key is resolved in the following order:
+
+1. **Environment variable** — `DORGU_LLM_API_KEY` (or provider-specific variables like `OPENAI_API_KEY`)
+2. **Global config** — `llm.api_key` in `~/.config/dorgu/config.yaml`
+3. **Interactive prompt** — If neither is set, dorgu prompts you at runtime
+
+<Info>
+  Storing your API key in an environment variable is recommended over saving it in the config file, especially in shared or CI environments.
+</Info>
+
+## Examples
+
+### config list
+
+Display all configuration keys with their current values:
+
+```bash
+dorgu config list
+```
+
+Example output:
+```
+llm.provider    = openai
+llm.api_key     = sk-...redacted
+llm.model       = gpt-4o
+defaults.namespace = default
+defaults.registry  = ghcr.io
+defaults.org_name  = my-org
+```
+
+### config get
+
+Retrieve a single value by key:
+
+```bash
+dorgu config get llm.provider
+```
+
+```
+openai
+```
+
+```bash
+dorgu config get defaults.namespace
+```
+
+```
+default
+```
+
+### config set
+
+Set a configuration value:
+
+```bash
+dorgu config set llm.provider anthropic
+```
+
+```bash
+dorgu config set defaults.namespace production
+```
+
+```bash
+dorgu config set defaults.registry ghcr.io
+```
+
+```bash
+dorgu config set llm.model claude-sonnet-4-20250514
+```
+
+### config path
+
+Show the resolved path to the configuration file:
+
+```bash
+dorgu config path
+```
+
+```
+/home/user/.config/dorgu/config.yaml
+```
+
+### config reset
+
+Reset all values in the global config file to built-in defaults:
+
+```bash
+dorgu config reset
+```
+
+<Warning>
+  This overwrites your global configuration file. App-level `.dorgu.yaml` files are not affected.
+</Warning>
+
+## Related
+
+- [dorgu init](/cli/commands/init) — Create initial configuration files (app-level or global)
+- [dorgu generate](/cli/commands/generate) — Generate Kubernetes manifests using the configured settings
+- [Command Overview](/cli/commands/overview) — All CLI commands at a glance

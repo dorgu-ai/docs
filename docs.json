@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Dorgu",
   "colors": {
     "primary": "#16A34A",
     "light": "#07C983",
@@ -11,58 +11,83 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "CLI",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
               "index",
-              "quickstart",
-              "development"
+              "cli/installation",
+              "cli/quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Commands",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "cli/commands/overview",
+              "cli/commands/generate",
+              "cli/commands/init",
+              "cli/commands/config",
+              "cli/commands/persona",
+              "cli/commands/cluster",
+              "cli/commands/cluster-setup",
+              "cli/commands/watch",
+              "cli/commands/sync",
+              "cli/commands/platform",
+              "cli/commands/version"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Configuration",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "cli/configuration/overview",
+              "cli/configuration/app-config",
+              "cli/configuration/global-config",
+              "cli/configuration/llm-providers",
+              "cli/configuration/environment-variables"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Guides",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "cli/guides/manifest-generation",
+              "cli/guides/cluster-onboarding",
+              "cli/guides/gitops-mode",
+              "cli/guides/working-with-personas",
+              "cli/guides/ci-cd-integration",
+              "cli/guides/language-support"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "cli/architecture/overview",
+              "cli/architecture/cli-pipeline",
+              "cli/architecture/data-flow",
+              "cli/architecture/crds",
+              "cli/architecture/trust-model"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Operator",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Overview",
             "pages": [
-              "api-reference/introduction"
+              "operator/index"
             ]
-          },
+          }
+        ]
+      },
+      {
+        "tab": "Platform",
+        "groups": [
           {
-            "group": "Endpoint examples",
+            "group": "Overview",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "platform/index"
             ]
           }
         ]
@@ -71,14 +96,14 @@
     "global": {
       "anchors": [
         {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
+          "anchor": "GitHub",
+          "href": "https://github.com/dorgu-ai/dorgu",
+          "icon": "github"
         },
         {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
+          "anchor": "Changelog",
+          "href": "https://github.com/dorgu-ai/dorgu/blob/main/CHANGELOG.md",
+          "icon": "list"
         }
       ]
     }
@@ -90,33 +115,30 @@
   "navbar": {
     "links": [
       {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
+        "label": "GitHub",
+        "href": "https://github.com/dorgu-ai/dorgu"
       }
     ],
     "primary": {
       "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
+      "label": "Get Started",
+      "href": "/cli/quickstart"
     }
   },
   "contextual": {
     "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "cursor",
+      "vscode"
+    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/dorgu-ai",
+      "x": "https://x.com/dorgu_ai"
     }
   }
 }

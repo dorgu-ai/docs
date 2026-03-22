@@ -1,0 +1,271 @@
+---
+title: "App Configuration"
+description: ".dorgu.yaml reference for workspace and application config"
+---
+
+# App Configuration
+
+The `.dorgu.yaml` file is Dorgu's primary configuration file. It can be placed at two levels:
+
+- **Workspace level** -- in your current working directory, applying defaults to all apps analyzed from that directory.
+- **App level** -- inside a specific application directory, providing app-specific configuration.
+
+## Creating a Config File
+
+```bash
+# Create with interactive prompts
+dorgu init
+
+# Create a minimal config (fewer fields)
+dorgu init --minimal
+
+# Create a full config with all available fields
+dorgu init --full
+```
+
+## Workspace Configuration Reference
+
+The workspace-level `.dorgu.yaml` sets organization-wide defaults. Below is the full annotated schema:
+
+```yaml
+version: "1"
+
+org:
+  name: "my-company"
+
+naming:
+  pattern: "{app}"
+  dns_safe: true
+
+resources:
+  defaults:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  profiles:
+    api:
+      requests: { cpu: "100m", memory: "256Mi" }
+      limits: { cpu: "1000m", memory: "1Gi" }
+    worker:
+      requests: { cpu: "500m", memory: "512Mi" }
+      limits: { cpu: "2000m", memory: "2Gi" }
+    web:
+      requests: { cpu: "50m", memory: "128Mi" }
+      limits: { cpu: "500m", memory: "512Mi" }
+
+labels:
+  required:
+    - "app.kubernetes.io/name"
+    - "app.kubernetes.io/managed-by"
+  custom: {}
+
+annotations:
+  custom:
+    "prometheus.io/scrape": "true"
+
+security:
+  pod_security_context:
+    run_as_non_root: true
+    seccomp_profile:
+      type: RuntimeDefault
+  container_security_context:
+    allow_privilege_escalation: false
+    read_only_root_filesystem: true
+    capabilities:
+      drop: [ALL]
+
+ingress:
+  class: "nginx"
+  domain_suffix: ".apps.local"
+  tls:
+    enabled: true
+    cluster_issuer: "letsencrypt-prod"
+
+argocd:
+  project: "default"
+  destination:
+    server: "https://kubernetes.default.svc"
+  sync_policy:
+    automated:
+      prune: true
+      self_heal: true
+
+ci:
+  provider: "github-actions"
+  registry: "ghcr.io/my-company"
+
+llm:
+  provider: "openai"
+  model: "gpt-4"
+```
+
+## Field Reference
+
+### `org`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Organization name used in labels and naming |
+
+### `naming`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pattern` | string | Naming pattern for generated resources. Supports `{app}`, `{env}`, and `{team}` placeholders. |
+| `dns_safe` | bool | When `true`, ensures generated names conform to DNS naming rules (lowercase, no underscores) |
+
+### `resources`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `defaults.requests.cpu` | string | Default CPU request for containers |
+| `defaults.requests.memory` | string | Default memory request for containers |
+| `defaults.limits.cpu` | string | Default CPU limit for containers |
+| `defaults.limits.memory` | string | Default memory limit for containers |
+| `profiles` | map | Named resource profiles (`api`, `worker`, `web`) with their own requests/limits |
+
+<Info>
+Resource profiles are selected automatically based on the detected application type, or can be specified manually in the app-level config.
+</Info>
+
+### `labels`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `required` | list | Labels that must be present on all generated resources |
+| `custom` | map | Additional key-value labels applied to all resources |
+
+### `annotations`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `custom` | map | Key-value annotations applied to all generated resources |
+
+### `security`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pod_security_context.run_as_non_root` | bool | Require containers to run as non-root |
+| `pod_security_context.seccomp_profile.type` | string | Seccomp profile type (e.g., `RuntimeDefault`) |
+| `container_security_context.allow_privilege_escalation` | bool | Whether containers can escalate privileges |
+| `container_security_context.read_only_root_filesystem` | bool | Mount root filesystem as read-only |
+| `container_security_context.capabilities.drop` | list | Linux capabilities to drop (e.g., `[ALL]`) |
+
+### `ingress`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `class` | string | Ingress controller class (e.g., `nginx`, `traefik`) |
+| `domain_suffix` | string | Domain suffix appended to app names for ingress hosts |
+| `tls.enabled` | bool | Enable TLS on generated ingress resources |
+| `tls.cluster_issuer` | string | cert-manager ClusterIssuer name for TLS certificates |
+
+### `argocd`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `project` | string | ArgoCD project to assign generated Application resources to |
+| `destination.server` | string | Target Kubernetes API server URL |
+| `sync_policy.automated.prune` | bool | Automatically delete resources removed from Git |
+| `sync_policy.automated.self_heal` | bool | Automatically sync when cluster state drifts |
+
+### `ci`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider` | string | CI provider (e.g., `github-actions`, `gitlab-ci`) |
+| `registry` | string | Container image registry URL |
+
+### `llm`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider` | string | LLM provider for enhanced analysis (`openai`, `anthropic`, `gemini`, `ollama`) |
+| `model` | string | Specific model to use (e.g., `gpt-4`, `claude-3-sonnet-20240229`) |
+
+---
+
+## App-Level Configuration
+
+When `.dorgu.yaml` is placed inside an application directory, it can include an additional `app` section with application-specific metadata and overrides:
+
+```yaml
+version: "1"
+app:
+  name: "order-service"
+  description: "Order processing API"
+  team: "commerce-backend"
+  owner: "orders@company.com"
+  repository: "https://github.com/company/order-service"
+  type: "api"      # api, web, worker, cron, daemon
+  instructions: |
+    High-traffic service; requires MySQL and Redis.
+environment: "production"
+resources:
+  requests: { cpu: "500m", memory: "1Gi" }
+  limits: { cpu: "2000m", memory: "2Gi" }
+scaling:
+  min_replicas: 5
+  max_replicas: 50
+  target_cpu: 65
+health:
+  liveness: { path: "/health", port: 8080 }
+  readiness: { path: "/ready", port: 8080 }
+dependencies:
+  - name: mysql
+    type: database
+    required: true
+  - name: redis
+    type: cache
+    required: true
+```
+
+### `app`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Application name |
+| `description` | string | Human-readable description |
+| `team` | string | Owning team (used in `{team}` naming placeholder) |
+| `owner` | string | Contact email for the application owner |
+| `repository` | string | Source code repository URL |
+| `type` | string | Application type: `api`, `web`, `worker`, `cron`, or `daemon` |
+| `instructions` | string | Free-form instructions for the LLM analyzer |
+
+### `environment`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `environment` | string | Target environment (e.g., `production`, `staging`, `development`) |
+
+### `scaling`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `min_replicas` | int | Minimum replica count for HPA |
+| `max_replicas` | int | Maximum replica count for HPA |
+| `target_cpu` | int | Target CPU utilization percentage for autoscaling |
+
+### `health`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `liveness.path` | string | HTTP path for liveness probe |
+| `liveness.port` | int | Port for liveness probe |
+| `readiness.path` | string | HTTP path for readiness probe |
+| `readiness.port` | int | Port for readiness probe |
+
+### `dependencies`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Dependency name (e.g., `mysql`, `redis`) |
+| `type` | string | Dependency type (`database`, `cache`, `queue`, `service`) |
+| `required` | bool | Whether the dependency is required for the app to function |
+
+<Note>
+App-level values override workspace-level values for the same keys. For example, `resources` set in an app config take precedence over workspace-level `resources.defaults`.
+</Note>

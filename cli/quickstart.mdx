@@ -1,0 +1,113 @@
+---
+title: Quickstart
+description: Generate Kubernetes manifests in 5 minutes
+---
+
+<Snippet file="prerequisites.mdx" />
+
+## Get started
+
+<Steps>
+  <Step title="Install the CLI">
+    <Snippet file="installation-go.mdx" />
+  </Step>
+
+  <Step title="Set up global config">
+    Configure your LLM provider and defaults (optional but recommended):
+
+    ```bash
+    dorgu init --global
+    ```
+
+    This prompts for:
+    - **LLM provider** — `openai`, `anthropic`, `gemini`, or `ollama`
+    - **API key** — your provider API key
+    - **Default namespace** — Kubernetes namespace (e.g., `default`)
+    - **Container registry** — e.g., `ghcr.io/my-org`
+    - **Organization name** — for Kubernetes labels
+
+    Config is saved to `~/.config/dorgu/config.yaml`.
+  </Step>
+
+  <Step title="Initialize your app">
+    Navigate to your application directory (must contain a `Dockerfile` or `docker-compose.yml`):
+
+    ```bash
+    cd my-app
+    dorgu init
+    ```
+
+    This creates a `.dorgu.yaml` file with app name, team, repository (auto-detected from git), and other metadata.
+  </Step>
+
+  <Step title="Generate manifests">
+    ```bash
+    dorgu generate .
+    ```
+
+    Dorgu analyzes your application and outputs:
+
+    ```
+    my-app/
+    ├── k8s/
+    │   ├── deployment.yaml
+    │   ├── service.yaml
+    │   ├── ingress.yaml
+    │   ├── hpa.yaml
+    │   └── argocd/
+    │       └── application.yaml
+    ├── .github/workflows/
+    │   └── deploy.yaml
+    └── PERSONA.md
+    ```
+
+    A validation report runs automatically, checking resource bounds, port consistency, health probes, and security contexts.
+  </Step>
+</Steps>
+
+## Preview with dry run
+
+Print generated manifests to stdout without writing files:
+
+```bash
+dorgu generate . --dry-run
+```
+
+## Use LLM-enhanced analysis
+
+For deeper analysis (framework-specific recommendations, resource sizing, security practices):
+
+```bash
+dorgu generate . --llm-provider openai
+```
+
+This requires an API key set via `dorgu init --global` or the `OPENAI_API_KEY` environment variable. See [LLM Providers](/cli/configuration/llm-providers) for all supported providers.
+
+## Output walkthrough
+
+| File | Description |
+|------|-------------|
+| `k8s/deployment.yaml` | Kubernetes Deployment with resource limits, health probes, security context |
+| `k8s/service.yaml` | ClusterIP Service mapping detected ports |
+| `k8s/ingress.yaml` | Ingress with TLS via cert-manager (if configured) |
+| `k8s/hpa.yaml` | HorizontalPodAutoscaler with CPU-based scaling |
+| `k8s/argocd/application.yaml` | ArgoCD Application pointing to your repo |
+| `.github/workflows/deploy.yaml` | GitHub Actions CI/CD pipeline (build, push, deploy) |
+| `PERSONA.md` | Human-readable persona document describing your app |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Command Reference" icon="book" href="/cli/commands/generate">
+    See all flags and options for `dorgu generate`.
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/cli/configuration/overview">
+    Customize manifests with layered configuration.
+  </Card>
+  <Card title="Cluster Setup" icon="server" href="/cli/guides/cluster-onboarding">
+    Bootstrap a production-ready Kubernetes stack.
+  </Card>
+  <Card title="Working with Personas" icon="id-card" href="/cli/guides/working-with-personas">
+    Apply ApplicationPersona CRDs to your cluster.
+  </Card>
+</CardGroup>

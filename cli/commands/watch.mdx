@@ -1,0 +1,87 @@
+---
+title: dorgu watch
+description: Stream real-time updates from the Dorgu Operator via WebSocket
+---
+
+## Synopsis
+
+```bash
+dorgu watch <subcommand> [flags]
+```
+
+Stream real-time updates from the Dorgu Operator over a WebSocket connection. The `watch` command opens a persistent connection to the operator and displays updates as they happen, without polling.
+
+All subcommands require the Dorgu Operator to be running with WebSocket support enabled (`websocket.enabled=true` in the Helm values).
+
+## Subcommands
+
+### watch personas
+
+```bash
+dorgu watch personas [flags]
+```
+
+Watch ApplicationPersona resources for real-time updates. Streams creation, modification, and deletion events for personas across the cluster.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-n`, `--namespace` | string | | Filter persona updates to a specific namespace |
+
+### watch cluster
+
+```bash
+dorgu watch cluster
+```
+
+Watch ClusterPersona resources for real-time updates. Streams changes to cluster-scoped persona definitions. No additional flags beyond the common flags.
+
+### watch events
+
+```bash
+dorgu watch events [flags]
+```
+
+Watch validation and reconciliation events emitted by the operator. Useful for debugging persona sync issues and observing the operator lifecycle.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-n`, `--namespace` | string | | Filter events to a specific namespace |
+
+## Common flags
+
+These flags apply to all `watch` subcommands:
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--operator-url` | string | `ws://localhost:9090/ws` | WebSocket URL of the Dorgu Operator |
+
+<Warning>
+  The `watch` command requires the Dorgu Operator to be running with `websocket.enabled=true` in the Helm values. If the operator is not reachable or WebSocket support is disabled, the command will fail to connect.
+</Warning>
+
+## Examples
+
+**Watch all persona updates:**
+```bash
+dorgu watch personas
+```
+
+**Watch personas in a specific namespace:**
+```bash
+dorgu watch personas --namespace production
+```
+
+**Watch cluster-wide persona changes:**
+```bash
+dorgu watch cluster
+```
+
+**Watch events with a custom operator URL:**
+```bash
+dorgu watch events --operator-url ws://operator.dorgu.svc:9090/ws
+```
+
+**Watch events in a specific namespace:**
+```bash
+dorgu watch events -n staging
+```
