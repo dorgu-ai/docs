@@ -1,0 +1,63 @@
+---
+title: "Cluster Dashboard"
+description: "Overview of the main dashboard view showing all clusters"
+---
+
+The dashboard is the main landing page of the platform. It displays all ClusterPersona resources in a table with key status information at a glance.
+
+## Dashboard view
+
+The cluster table shows:
+
+| Column | Description |
+|--------|-------------|
+| Name | Cluster name (clickable — navigates to detail view) |
+| Environment | Environment tag from `spec.environment` (e.g., production, staging) |
+| Status | Phase badge with color coding |
+| Nodes | Total node count |
+| Description | Truncated cluster description |
+
+## Status badges
+
+Clusters display a color-coded status badge based on their phase:
+
+| Phase | Color | Meaning |
+|-------|-------|---------|
+| Ready | Green | All nodes healthy, discovery complete |
+| Pending | Blue | Initial discovery in progress |
+| Degraded | Yellow | Some nodes not ready |
+| Failed | Red | Discovery failed |
+| Unknown | Gray | Status not yet determined |
+
+## Navigation
+
+Click any cluster row to navigate to the [cluster detail view](/platform/features/cluster-detail) for that cluster.
+
+## Data fetching
+
+The dashboard uses React Query to fetch cluster data:
+
+- **Stale time**: 10 seconds — data is considered fresh for 10s before refetching
+- **Background refetch**: Disabled on window focus to avoid unnecessary API calls
+- **Retry**: 1 retry on failure
+
+Data is also automatically refreshed when the WebSocket connection receives a cluster event. See [real-time updates](/platform/features/real-time) for details.
+
+## States
+
+The dashboard handles three states:
+
+| State | Display |
+|-------|---------|
+| Loading | Skeleton placeholders in table rows |
+| Error | Alert banner with error message |
+| Empty | "No clusters found" message |
+
+<CardGroup cols={2}>
+  <Card title="Cluster detail" icon="server" href="/platform/features/cluster-detail">
+    Detailed view of a single cluster
+  </Card>
+  <Card title="Real-time updates" icon="bolt" href="/platform/features/real-time">
+    How live updates work
+  </Card>
+</CardGroup>

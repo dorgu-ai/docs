@@ -111,9 +111,33 @@
         "tab": "Platform",
         "groups": [
           {
-            "group": "Overview",
+            "group": "Getting Started",
             "pages": [
-              "platform/index"
+              "platform/index",
+              "platform/installation",
+              "platform/quickstart"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "platform/features/dashboard",
+              "platform/features/cluster-detail",
+              "platform/features/real-time"
+            ]
+          },
+          {
+            "group": "API Reference",
+            "pages": [
+              "platform/api/rest",
+              "platform/api/websocket"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "platform/architecture/overview",
+              "platform/development"
             ]
           }
         ]

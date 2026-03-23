@@ -1,0 +1,72 @@
+---
+title: "Cluster Detail"
+description: "Detailed view of a single cluster's nodes, add-ons, and resources"
+---
+
+The cluster detail view shows comprehensive information about a single ClusterPersona. Navigate to it by clicking a cluster name in the dashboard.
+
+## Overview section
+
+The top of the page shows:
+
+| Field | Source |
+|-------|--------|
+| Cluster name | `spec.name` |
+| Environment | `spec.environment` |
+| Phase | `status.phase` with status badge |
+| Kubernetes version | `status.kubernetesVersion` |
+| Platform | `status.platform` (EKS, GKE, AKS, Kind, etc.) |
+| Application count | `status.applicationCount` |
+| Last discovery | `status.lastDiscovery` timestamp |
+
+## Nodes table
+
+Lists all Kubernetes nodes discovered by the operator:
+
+| Column | Source | Display |
+|--------|--------|---------|
+| Name | `node.name` | Plain text |
+| Role | `node.role` | Badge (master/worker) |
+| Status | `node.ready` | Green badge for Ready, red for NotReady |
+| Kubelet version | `node.kubeletVersion` | Version string |
+
+## Add-ons table
+
+Lists detected cluster add-ons and their status:
+
+| Column | Source | Display |
+|--------|--------|---------|
+| Name | `addon.name` | Add-on name (e.g., ArgoCD, Prometheus) |
+| Version | `addon.version` | Extracted from container image tag |
+| Health | `addon.healthy` | Green/red badge |
+| Namespace | `addon.namespace` | Namespace where the add-on runs |
+
+## Resource summary
+
+When available, the detail view shows aggregated cluster resources:
+
+| Field | Description |
+|-------|-------------|
+| Total CPU | Sum of all node CPU capacity |
+| Total memory | Sum of all node memory capacity |
+| Allocatable CPU | Sum of allocatable CPU across nodes |
+| Allocatable memory | Sum of allocatable memory across nodes |
+| Running pods | Current running pod count |
+
+## States
+
+| State | Display |
+|-------|---------|
+| Loading | Skeleton placeholders for all sections |
+| Error | Alert with error message and retry option |
+| Not found | 404 message when cluster name doesn't match |
+| Data | Full detail view with all sections |
+
+<CardGroup cols={2}>
+  <Card title="Dashboard" icon="grid-2" href="/platform/features/dashboard">
+    Back to the cluster list
+  </Card>
+  <Card title="Cluster discovery" icon="magnifying-glass" href="/operator/features/cluster-discovery">
+    How the operator discovers cluster state
+  </Card>
+</CardGroup>

@@ -1,0 +1,72 @@
+---
+title: "Quickstart"
+description: "Get the Dorgu Platform running and viewing cluster state in 5 minutes"
+---
+
+This guide walks you through starting the platform and exploring your cluster's state.
+
+## Prerequisites
+
+- dorgu CLI installed ([installation guide](/cli/installation))
+- dorgu operator running in your cluster ([operator installation](/operator/installation))
+- At least one ClusterPersona created ([cluster onboarding](/cli/guides/cluster-onboarding))
+
+## Steps
+
+<Steps>
+  <Step title="Start the platform">
+    ```bash
+    dorgu platform serve
+    ```
+
+    You should see:
+
+    ```
+    Starting Dorgu Platform on :8080
+    Kubernetes watcher started, waiting for cache sync...
+    Cache synced, watching for ClusterPersona changes
+    Platform ready at http://localhost:8080
+    ```
+  </Step>
+
+  <Step title="Open the dashboard">
+    Open [http://localhost:8080](http://localhost:8080) in your browser. You'll see the cluster dashboard with all your ClusterPersona resources listed.
+
+    Each row shows:
+    - Cluster name
+    - Environment tag
+    - Phase status (Ready, Pending, Degraded)
+    - Node count
+  </Step>
+
+  <Step title="View cluster details">
+    Click on any cluster name to see its detail page. This shows:
+
+    - **Overview** — Environment, phase, Kubernetes version, platform
+    - **Nodes** — Name, role, ready status, kubelet version
+    - **Add-ons** — Installed components with health and version
+    - **Resources** — Total and allocatable CPU, memory, pods
+  </Step>
+
+  <Step title="Watch live updates">
+    The platform automatically receives live updates via WebSocket. Try making a change in your cluster:
+
+    ```bash
+    # Scale a node pool or update a ClusterPersona
+    kubectl edit clusterpersona my-cluster
+    ```
+
+    The dashboard updates automatically without refreshing the page.
+  </Step>
+</Steps>
+
+## What's next
+
+<CardGroup cols={2}>
+  <Card title="Dashboard features" icon="grid-2" href="/platform/features/dashboard">
+    All dashboard capabilities
+  </Card>
+  <Card title="REST API" icon="code" href="/platform/api/rest">
+    Query cluster data programmatically
+  </Card>
+</CardGroup>

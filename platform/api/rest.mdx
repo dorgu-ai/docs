@@ -1,0 +1,139 @@
+---
+title: "REST API"
+description: "HTTP API reference for querying cluster data"
+---
+
+The platform exposes a JSON REST API for querying ClusterPersona data. The frontend uses this API, and you can also call it directly.
+
+## Endpoints
+
+### List clusters
+
+```
+GET /api/clusters
+```
+
+Returns all ClusterPersona resources.
+
+**Response:**
+
+```json
+{
+  "clusters": [
+    {
+      "name": "prod-cluster",
+      "spec": {
+        "name": "prod-cluster",
+        "description": "Production EKS cluster",
+        "environment": "production"
+      },
+      "status": {
+        "phase": "Ready",
+        "kubernetesVersion": "v1.29.0",
+        "platform": "EKS",
+        "applicationCount": 12,
+        "lastDiscovery": "2026-03-23T10:30:00Z",
+        "nodes": [...],
+        "addons": [...],
+        "resourceSummary": {...}
+      }
+    }
+  ]
+}
+```
+
+### Get cluster
+
+```
+GET /api/clusters/{name}
+```
+
+Returns a single ClusterPersona by name.
+
+**Response:** Same structure as a single item from the list endpoint (unwrapped, not inside `clusters` array).
+
+**Error (404):**
+
+```json
+{
+  "error": "cluster not found"
+}
+```
+
+### Health check
+
+```
+GET /health
+```
+
+Returns `200 OK` when the server is running.
+
+## Response schema
+
+### ClusterPersona
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Resource name |
+| `spec.name` | string | Cluster identifier |
+| `spec.description` | string | Human-readable description |
+| `spec.environment` | string | Environment tag (production, staging, dev) |
+| `status.phase` | string | Cluster phase (Ready, Pending, Degraded, Failed) |
+| `status.kubernetesVersion` | string | Kubernetes version |
+| `status.platform` | string | Infrastructure platform (EKS, GKE, AKS, Kind, etc.) |
+| `status.applicationCount` | int | Number of ApplicationPersonas |
+| `status.lastDiscovery` | string | ISO 8601 timestamp of last discovery |
+| `status.nodes` | array | List of NodeInfo objects |
+| `status.addons` | array | List of AddonInfo objects |
+| `status.resourceSummary` | object | Aggregated resource information |
+
+### NodeInfo
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Node name |
+| `role` | string | Node role (master, worker) |
+| `ready` | boolean | Whether the node is Ready |
+| `kubeletVersion` | string | Kubelet version |
+| `containerRuntime` | string | Container runtime and version |
+
+### AddonInfo
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Add-on name |
+| `namespace` | string | Namespace where the add-on runs |
+| `healthy` | boolean | Whether the add-on pod is healthy |
+| `version` | string | Version from container image tag |
+
+### ResourceSummary
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `totalCPU` | string | Total CPU capacity across nodes |
+| `totalMemory` | string | Total memory capacity across nodes |
+| `allocatableCPU` | string | Allocatable CPU across nodes |
+| `allocatableMemory` | string | Allocatable memory across nodes |
+| `runningPods` | int | Current running pod count |
+
+## Examples
+
+```bash
+# List all clusters
+curl http://localhost:8080/api/clusters
+
+# Get a specific cluster
+curl http://localhost:8080/api/clusters/prod-cluster
+
+# Pretty-print with jq
+curl -s http://localhost:8080/api/clusters | jq '.clusters[].name'
+```
+
+<CardGroup cols={2}>
+  <Card title="WebSocket API" icon="plug" href="/platform/api/websocket">
+    Real-time event protocol
+  </Card>
+  <Card title="Dashboard" icon="grid-2" href="/platform/features/dashboard">
+    How the frontend uses this API
+  </Card>
+</CardGroup>

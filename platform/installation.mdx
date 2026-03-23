@@ -1,0 +1,106 @@
+---
+title: "Installation"
+description: "How to install and run the Dorgu Platform"
+---
+
+The platform can be run via the dorgu CLI, as a standalone binary, or from source.
+
+## Via dorgu CLI (recommended)
+
+If you already have the dorgu CLI installed:
+
+```bash
+dorgu platform serve
+```
+
+This starts the platform on port 8080 using your current kubeconfig context.
+
+### Options
+
+```bash
+dorgu platform serve --port 3000                    # Custom port
+dorgu platform serve --kubeconfig ~/.kube/prod.yaml  # Specific kubeconfig
+dorgu platform serve --context prod-cluster          # Specific context
+dorgu platform serve --verbose                       # Enable debug logging
+```
+
+## Standalone binary
+
+Build and run the platform server directly:
+
+```bash
+cd dorgu-platform
+make build
+./bin/server -port 8080
+```
+
+### Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-port` | `8080` | HTTP server port |
+| `-kubeconfig` | `~/.kube/config` | Path to kubeconfig file |
+| `-context` | Current context | Kubernetes context to use |
+
+## From source
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/dorgu-ai/dorgu-platform.git
+    cd dorgu-platform
+    ```
+  </Step>
+  <Step title="Build the frontend">
+    ```bash
+    cd web
+    npm install
+    npm run build
+    cd ..
+    ```
+  </Step>
+  <Step title="Build the binary">
+    ```bash
+    make build
+    ```
+    This copies the frontend build to `pkg/server/static` and compiles a single Go binary with embedded assets.
+  </Step>
+  <Step title="Run">
+    ```bash
+    ./bin/server -port 8080
+    ```
+  </Step>
+</Steps>
+
+## Prerequisites
+
+- A running Kubernetes cluster with the dorgu operator installed
+- At least one ClusterPersona resource created
+- A valid kubeconfig with access to the cluster
+
+<Info>
+The platform only reads ClusterPersona resources — it makes no changes to your cluster. It requires `get`, `list`, and `watch` permissions on `clusterpersonas.dorgu.io`.
+</Info>
+
+## Verifying the installation
+
+After starting the platform, verify it's working:
+
+```bash
+# Check the health endpoint
+curl http://localhost:8080/health
+
+# Check the API returns clusters
+curl http://localhost:8080/api/clusters
+```
+
+Then open [http://localhost:8080](http://localhost:8080) in your browser.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/platform/quickstart">
+    Step-by-step first use guide
+  </Card>
+  <Card title="Development" icon="code" href="/platform/development">
+    Run in development mode with hot reload
+  </Card>
+</CardGroup>
