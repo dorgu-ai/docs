@@ -1,0 +1,144 @@
+---
+title: "Installation"
+description: "Install the Dorgu Operator via Helm, kustomize, or source build"
+---
+
+## Prerequisites
+
+- Kubernetes cluster 1.24+
+- `kubectl` configured for your cluster
+- Helm 3.x (for Helm installation)
+
+## Helm (recommended)
+
+Install the operator from the OCI registry:
+
+```bash
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  --version 0.3.0 \
+  --namespace dorgu-system \
+  --create-namespace
+```
+
+To customize the installation, create a `values.yaml` file:
+
+```yaml
+webhook:
+  enabled: true
+  mode: advisory
+
+argocd:
+  enabled: true
+
+prometheus:
+  enabled: true
+  url: "http://prometheus-server.monitoring:9090"
+
+websocket:
+  enabled: true
+```
+
+Then install with your values:
+
+```bash
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  --version 0.3.0 \
+  --namespace dorgu-system \
+  --create-namespace \
+  -f values.yaml
+```
+
+See the [Helm values reference](/operator/configuration/helm-values) for all available options.
+
+## Kustomize
+
+Install CRDs and deploy the operator using kustomize:
+
+```bash
+# Clone the repository
+git clone https://github.com/dorgu-ai/dorgu-operator.git
+cd dorgu-operator
+
+# Install CRDs
+make install
+
+# Deploy the operator
+make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.3.0
+```
+
+To uninstall:
+
+```bash
+make undeploy
+make uninstall
+```
+
+## Build from source
+
+```bash
+git clone https://github.com/dorgu-ai/dorgu-operator.git
+cd dorgu-operator
+
+# Build the binary
+make build
+
+# Run locally against your current kubeconfig
+./bin/manager \
+  --metrics-bind-address :8080 \
+  --metrics-secure=false \
+  --health-probe-bind-address :8081
+```
+
+<Warning>
+Running locally connects to whatever cluster your `kubeconfig` points to. Make sure you are targeting the correct cluster before starting the operator.
+</Warning>
+
+## Build and push Docker image
+
+```bash
+make docker-build IMG=your-registry/dorgu-operator:latest
+make docker-push IMG=your-registry/dorgu-operator:latest
+```
+
+Multi-platform builds (arm64, amd64) are supported:
+
+```bash
+make docker-buildx IMG=your-registry/dorgu-operator:latest PLATFORMS=linux/arm64,linux/amd64
+```
+
+## Verify installation
+
+Check that the operator is running:
+
+```bash
+kubectl get pods -n dorgu-system
+```
+
+Expected output:
+
+```
+NAME                              READY   STATUS    RESTARTS   AGE
+dorgu-operator-6d4b5c7f9-x2k4p   1/1     Running   0          30s
+```
+
+Verify the CRDs are installed:
+
+```bash
+kubectl get crd | grep dorgu
+```
+
+Expected output:
+
+```
+applicationpersonas.dorgu.io   2026-03-23T00:00:00Z
+clusterpersonas.dorgu.io       2026-03-23T00:00:00Z
+```
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/operator/quickstart">
+    Apply your first persona and see the operator in action
+  </Card>
+  <Card title="Configuration" icon="gear" href="/operator/configuration/overview">
+    Customize flags and Helm values
+  </Card>
+</CardGroup>

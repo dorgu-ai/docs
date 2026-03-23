@@ -1,0 +1,195 @@
+---
+title: "Helm Values Reference"
+description: "Complete reference for the dorgu-operator Helm chart values"
+---
+
+The Helm chart provides a `values.yaml` that maps to the operator's command-line flags and Kubernetes resource configuration.
+
+## Default values
+
+```yaml
+replicaCount: 1
+
+image:
+  repository: ghcr.io/dorgu-ai/dorgu-operator
+  tag: ""  # Defaults to chart appVersion
+  pullPolicy: IfNotPresent
+
+webhook:
+  enabled: false
+  mode: advisory
+  port: 9443
+
+leaderElection:
+  enabled: true
+
+metrics:
+  enabled: true
+  bindAddress: ":8443"
+  secure: true
+
+argocd:
+  enabled: true
+
+prometheus:
+  enabled: false
+  url: ""
+
+websocket:
+  enabled: false
+  port: 9090
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+```
+
+## Value reference
+
+### Image
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `image.repository` | string | `ghcr.io/dorgu-ai/dorgu-operator` | Container image repository |
+| `image.tag` | string | Chart `appVersion` | Image tag override |
+| `image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
+| `imagePullSecrets` | array | `[]` | Image pull secrets for private registries |
+
+### Replicas and scheduling
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `replicaCount` | int | `1` | Number of operator replicas |
+| `leaderElection.enabled` | bool | `true` | Enable leader election (required for replicas > 1) |
+| `nodeSelector` | object | `{}` | Node selector for pod scheduling |
+| `tolerations` | array | `[]` | Pod tolerations |
+| `affinity` | object | `{}` | Pod affinity rules |
+
+### Webhook
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `webhook.enabled` | bool | `false` | Enable validating admission webhook |
+| `webhook.mode` | string | `advisory` | `advisory` or `enforcing` |
+| `webhook.port` | int | `9443` | Webhook server port |
+
+<Info>
+The webhook requires TLS certificates. In production, use cert-manager to provision certificates automatically. The Helm chart includes the necessary annotations when cert-manager is available.
+</Info>
+
+### Metrics
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `metrics.enabled` | bool | `true` | Enable metrics endpoint |
+| `metrics.bindAddress` | string | `:8443` | Metrics server bind address |
+| `metrics.secure` | bool | `true` | Serve metrics over HTTPS with authentication |
+
+### ArgoCD
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `argocd.enabled` | bool | `true` | Enable ArgoCD Application watching |
+
+The watcher auto-detects whether the ArgoCD CRD exists. If `enabled: true` but the CRD is absent, the watcher silently skips.
+
+### Prometheus
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `prometheus.enabled` | bool | `false` | Enable Prometheus baseline learning |
+| `prometheus.url` | string | `""` | Prometheus server URL |
+
+Example: `http://prometheus-server.monitoring:9090`
+
+### WebSocket
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `websocket.enabled` | bool | `false` | Enable WebSocket server for CLI communication |
+| `websocket.port` | int | `9090` | WebSocket server port |
+
+When enabled, the chart creates a ClusterIP Service on the specified port.
+
+### Resources
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `resources.limits.cpu` | string | `500m` | CPU limit |
+| `resources.limits.memory` | string | `128Mi` | Memory limit |
+| `resources.requests.cpu` | string | `10m` | CPU request |
+| `resources.requests.memory` | string | `64Mi` | Memory request |
+
+### Service account
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `serviceAccount.create` | bool | `true` | Create a service account |
+| `serviceAccount.name` | string | Release name | Service account name override |
+| `serviceAccount.annotations` | object | `{}` | Service account annotations (e.g., for IRSA) |
+
+## Example: Production deployment
+
+```yaml
+replicaCount: 2
+
+leaderElection:
+  enabled: true
+
+webhook:
+  enabled: true
+  mode: enforcing
+
+argocd:
+  enabled: true
+
+prometheus:
+  enabled: true
+  url: "http://prometheus-server.monitoring:9090"
+
+websocket:
+  enabled: true
+
+resources:
+  limits:
+    cpu: "1"
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - dorgu-operator
+          topologyKey: kubernetes.io/hostname
+```
+
+<CardGroup cols={2}>
+  <Card title="Configuration overview" icon="gear" href="/operator/configuration/overview">
+    Feature matrix and CLI flags
+  </Card>
+  <Card title="Installation" icon="download" href="/operator/installation">
+    Install the operator with these values
+  </Card>
+</CardGroup>

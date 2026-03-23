@@ -74,9 +74,35 @@
         "tab": "Operator",
         "groups": [
           {
-            "group": "Overview",
+            "group": "Getting Started",
             "pages": [
-              "operator/index"
+              "operator/index",
+              "operator/installation",
+              "operator/quickstart"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "operator/configuration/overview",
+              "operator/configuration/helm-values"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "operator/features/validation",
+              "operator/features/cluster-discovery",
+              "operator/features/webhook",
+              "operator/features/argocd",
+              "operator/features/prometheus",
+              "operator/features/websocket"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "operator/architecture/overview"
             ]
           }
         ]

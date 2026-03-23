@@ -1,0 +1,137 @@
+---
+title: "Quickstart"
+description: "Get the Dorgu Operator running and validate your first persona in 5 minutes"
+---
+
+This guide walks you through installing the operator, creating a persona, and observing the operator validate it.
+
+## Step 1: Install the operator
+
+```bash
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  --version 0.3.0 \
+  --namespace dorgu-system \
+  --create-namespace
+```
+
+Wait for the pod to be ready:
+
+```bash
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=dorgu-operator \
+  -n dorgu-system --timeout=60s
+```
+
+## Step 2: Create a ClusterPersona
+
+Initialize the cluster context so the operator knows about your cluster:
+
+```bash
+dorgu cluster init --name my-cluster --environment development
+```
+
+Or apply directly:
+
+```yaml
+apiVersion: dorgu.io/v1
+kind: ClusterPersona
+metadata:
+  name: my-cluster
+spec:
+  name: my-cluster
+  environment: development
+```
+
+```bash
+kubectl apply -f clusterpersona.yaml
+```
+
+Check the discovery status:
+
+```bash
+dorgu cluster status
+```
+
+The operator discovers nodes, add-ons, and resource capacity within seconds.
+
+## Step 3: Deploy a sample application
+
+Create a namespace and deploy a sample workload:
+
+```bash
+kubectl create namespace demo
+kubectl create deployment nginx --image=nginx:latest -n demo
+kubectl label deployment nginx app.kubernetes.io/name=nginx -n demo
+```
+
+## Step 4: Apply an ApplicationPersona
+
+Generate and apply a persona for the sample application:
+
+```bash
+dorgu persona apply ./my-app -n demo
+```
+
+Or apply a persona manifest directly:
+
+```yaml
+apiVersion: dorgu.io/v1
+kind: ApplicationPersona
+metadata:
+  name: nginx
+  namespace: demo
+spec:
+  name: nginx
+  type: web
+  tier: standard
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+  scaling:
+    minReplicas: 1
+    maxReplicas: 5
+  health:
+    livenessPath: /
+    readinessPath: /
+    port: 80
+  policies:
+    security:
+      runAsNonRoot: true
+```
+
+```bash
+kubectl apply -f persona.yaml
+```
+
+## Step 5: Check validation status
+
+```bash
+dorgu persona status nginx -n demo
+```
+
+The operator reconciles the persona against the deployment and reports validation issues. For the sample above, you might see warnings like:
+
+- No resource requests set on container
+- Persona requires `runAsNonRoot` but Deployment does not enforce it
+- No liveness probe configured
+
+These issues appear in `.status.validation.issues` and the phase reflects the overall state (`Active`, `Degraded`, or `Failed`).
+
+## Step 6: Fix issues and re-check
+
+Update the deployment to satisfy the persona constraints. The operator re-validates automatically every 60 seconds, or immediately when the deployment changes.
+
+```bash
+dorgu persona status nginx -n demo
+```
+
+When all validations pass, the phase transitions to `Active` and `.status.validation.passed` becomes `true`.
+
+<CardGroup cols={2}>
+  <Card title="Validation details" icon="shield-check" href="/operator/features/validation">
+    Learn what the operator validates and how severity works
+  </Card>
+  <Card title="Configuration" icon="gear" href="/operator/configuration/overview">
+    Enable webhooks, ArgoCD, Prometheus, and WebSocket
+  </Card>
+</CardGroup>
