@@ -33,6 +33,8 @@
               "cli/commands/cluster-setup",
               "cli/commands/watch",
               "cli/commands/sync",
+              "cli/commands/health",
+              "cli/commands/incidents",
               "cli/commands/platform",
               "cli/commands/version"
             ]
