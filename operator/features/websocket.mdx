@@ -248,8 +248,9 @@ When enabled, the Helm chart creates a ClusterIP Service on the specified port.
 The dorgu CLI connects to the WebSocket server automatically when available:
 
 ```bash
-dorgu watch -n production        # Live persona updates
-dorgu cluster status --live      # Live cluster state
+dorgu watch personas -n production   # Live persona updates
+dorgu watch cluster                  # Live cluster state
+dorgu watch events -n production     # Live validation events
 ```
 
 <CardGroup cols={2}>

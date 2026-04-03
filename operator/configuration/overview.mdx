@@ -15,7 +15,7 @@ The operator is configured through command-line flags, which map directly to Hel
 | Validating webhook | Disabled | `--enable-webhook` | Intercepts Deployment create/update |
 | Prometheus integration | Disabled | `--prometheus-url` | Queries Prometheus for resource baselines |
 | WebSocket server | Disabled | `--enable-websocket` | Real-time CLI communication |
-| Leader election | Disabled | `--leader-elect` | HA mode for multi-replica deployments |
+| Leader election | Disabled (flag default; enabled in Helm chart) | `--leader-elect` | HA mode for multi-replica deployments |
 | Secure metrics | Enabled | `--metrics-secure` | HTTPS metrics endpoint with RBAC |
 
 ## Command-line flags
