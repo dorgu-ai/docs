@@ -1,0 +1,110 @@
+---
+title: dorgu incidents
+description: List and inspect IncidentMemory resources created by the Dorgu Operator
+---
+
+## Overview
+
+The `dorgu incidents` command group lists and inspects `IncidentMemory` custom resources on your cluster. These resources are created by the Dorgu Operator when it detects anomalies such as OOMKills, crash loops, or resource constraint violations.
+
+## incidents list
+
+### Synopsis
+
+```bash
+dorgu incidents list [flags]
+```
+
+List IncidentMemory resources from the cluster. By default, only active incidents (not `Resolved`) are shown. Use `--all` to include resolved incidents.
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-n, --namespace` | string | all namespaces | Filter by namespace |
+| `--severity` | string | all | Filter by severity: `info`, `warning`, `critical` |
+| `--category` | string | all | Filter by category (e.g. `resource`, `security`) |
+| `--phase` | string | all | Filter by phase: `Detected`, `Investigating`, `Resolved`, `Recurring` |
+| `--all` | bool | `false` | Include resolved incidents |
+| `--limit` | int | `50` | Maximum number of incidents to display |
+| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
+| `--json` | bool | `false` | Output as JSON (inherited global flag) |
+
+### Examples
+
+```bash
+# List active incidents across all namespaces
+dorgu incidents list
+
+# Filter by severity
+dorgu incidents list --severity critical
+
+# Filter by namespace and phase
+dorgu incidents list -n default --phase Detected
+
+# Show all incidents including resolved, with a higher limit
+dorgu incidents list --all --limit 100
+
+# JSON output for scripting
+dorgu incidents list --json
+```
+
+### Output columns
+
+| Column | Description |
+|--------|-------------|
+| NAMESPACE | Namespace of the IncidentMemory resource |
+| NAME | Resource name |
+| SEVERITY | `info`, `warning`, or `critical` |
+| CATEGORY | Incident category (e.g. `resource`, `security`) |
+| SIGNAL | Detection signal (e.g. `OOMKilled`, `CrashLoopBackOff`) |
+| PERSONA | ApplicationPersona the incident relates to |
+| PHASE | `Detected`, `Investigating`, `Resolved`, or `Recurring` |
+| AGE | Time since the incident was created |
+
+---
+
+## incidents describe
+
+### Synopsis
+
+```bash
+dorgu incidents describe <name> -n <namespace> [flags]
+```
+
+Display detailed information about a specific IncidentMemory resource, including detection info, root cause analysis, affected resources, and timeline.
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-n, --namespace` | string | **required** | Namespace of the incident |
+| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
+| `--json` | bool | `false` | Output as JSON (inherited global flag) |
+
+### Examples
+
+```bash
+# Describe a specific incident
+dorgu incidents describe im-default-api-oom-a3f2 -n default
+
+# JSON output
+dorgu incidents describe im-default-api-oom-a3f2 -n default --json
+```
+
+### Output sections
+
+| Section | Description |
+|---------|-------------|
+| **Phase / Severity / Category** | Current incident status and classification |
+| **Signal** | The detection signal that triggered the incident |
+| **Persona** | The ApplicationPersona reference (kind, name, namespace) |
+| **Detection** | Source, first seen, last seen timestamps |
+| **Affected Resources** | Kubernetes resources involved (kind, name, namespace) |
+| **Root Cause** | LLM-generated analysis with confidence score and contributing signals |
+| **Resolution** | Action taken, outcome, and timestamp (if resolved) |
+| **Occurrences** | Total number of times this incident has been detected |
+
+<Note>
+  Requires the Dorgu Operator to be installed on the cluster. If the `IncidentMemory` CRD is not registered, the command will report an error with installation instructions.
+</Note>

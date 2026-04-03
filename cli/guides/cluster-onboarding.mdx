@@ -32,7 +32,7 @@ Choose a cluster environment based on your use case:
     Install Dorgu via `go install`:
 
     ```bash
-    go install github.com/dorgu-ai/dorgu@latest
+    go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest
     ```
 
     Verify the installation:
@@ -116,14 +116,14 @@ clusterpersonas.dorgu.io
 
 The `dorgu cluster setup` command installs a curated set of production-ready components:
 
-| Component | Description |
-|-----------|-------------|
-| **cert-manager** | Automated TLS certificate management via Let's Encrypt or internal CAs |
-| **ingress-nginx** | HTTP/S ingress controller for routing external traffic |
-| **CloudNativePG** | PostgreSQL operator, required by OpenObserve for metadata storage |
-| **OpenObserve** | Unified observability platform — logs, metrics, and traces in one tool |
-| **Argo CD** | Declarative GitOps continuous delivery engine |
-| **External Secrets** | Sync secrets from cloud stores (AWS Secrets Manager, Vault, GCP Secret Manager) — optional |
+| Component | Chart Version | Description |
+|-----------|---------------|-------------|
+| **cert-manager** | v1.16.3 | Automated TLS certificate management via Let's Encrypt or internal CAs |
+| **ingress-nginx** | 4.11.3 | HTTP/S ingress controller for routing external traffic |
+| **CloudNativePG** | 0.23.0 | PostgreSQL operator, required by OpenObserve for metadata storage |
+| **OpenObserve** | 0.60.0 | Unified observability platform — logs, metrics, and traces in one tool (15m Helm timeout) |
+| **Argo CD** | 7.8.28 | Declarative GitOps continuous delivery engine |
+| **External Secrets** | 0.10.7 | Sync secrets from cloud stores (AWS Secrets Manager, Vault, GCP Secret Manager) — optional |
 
 Components are installed in dependency order. For example, cert-manager is installed before ingress-nginx (which needs TLS), and CloudNativePG is installed before OpenObserve (which needs PostgreSQL).
 
@@ -157,7 +157,9 @@ Components are installed in dependency order. For example, cert-manager is insta
   </Accordion>
 
   <Accordion title="Helm install times out for a blessed stack component">
-    Some components (especially OpenObserve with CloudNativePG) take longer to become ready. Re-run setup with verbose output to see real-time progress:
+    Some components take longer to become ready. OpenObserve in particular uses an extended 15-minute Helm timeout (vs the default 5 minutes) because it depends on CloudNativePG PostgreSQL pods being fully provisioned first.
+
+    Re-run setup with verbose output to see real-time progress:
 
     ```bash
     dorgu cluster setup --verbose

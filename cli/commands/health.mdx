@@ -1,0 +1,94 @@
+---
+title: dorgu health
+description: Display a summary of cluster health including nodes, resource saturation, control plane, and incidents
+---
+
+## Synopsis
+
+```bash
+dorgu health [flags]
+```
+
+## Description
+
+Display a comprehensive cluster health summary by querying the Kubernetes API directly. The output includes node status, resource saturation (CPU and memory), control plane component health, active incidents, and pending remediations.
+
+When the Dorgu Operator is installed, the command shows richer data sourced from `ClusterPersona` resource summaries, `IncidentMemory` CRDs, and `RemediationAction` CRDs. Without the operator, it gracefully degrades to node and control plane information only.
+
+## Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-n, --namespace` | string | all namespaces | Filter incidents by namespace |
+| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
+| `--json` | bool | `false` | Output as JSON (inherited global flag) |
+
+## Output sections
+
+| Section | Source | Description |
+|---------|--------|-------------|
+| **Nodes** | `kubectl get nodes` | Name, status (Ready/NotReady), roles, age |
+| **Resource Saturation** | ClusterPersona `.status.resourceSummary` | CPU and memory request utilization as a percentage of allocatable capacity |
+| **Control Plane** | Pods in `kube-system` with `tier=control-plane` | Health of API Server, Scheduler, Controller Manager, etcd |
+| **Active Incidents** | `IncidentMemory` CRDs (operator required) | Severity, category, signal, persona reference, age |
+| **Pending Remediations** | `RemediationAction` CRDs (operator required) | Count of remediations in `Pending` or `Approved` phase |
+
+## Examples
+
+```bash
+# Full cluster health summary
+dorgu health
+
+# JSON output for scripting
+dorgu health --json
+
+# Filter incidents to a specific namespace
+dorgu health -n production
+
+# Use a specific kubeconfig
+dorgu health --kubeconfig /path/to/kubeconfig
+```
+
+## JSON output
+
+When `--json` is set, the output follows this structure:
+
+```json
+{
+  "nodes": [
+    { "name": "node-1", "status": "Ready", "roles": "control-plane", "age": "5d" }
+  ],
+  "resourceSaturation": {
+    "cpu": { "percentage": "42%", "used": "1700m", "allocatable": "4000m" },
+    "memory": { "percentage": "61%", "used": "3.2Gi", "allocatable": "5.2Gi" }
+  },
+  "controlPlane": {
+    "healthy": true,
+    "components": [
+      { "name": "API Server", "healthy": true },
+      { "name": "Scheduler", "healthy": true },
+      { "name": "Controller Manager", "healthy": true },
+      { "name": "etcd", "healthy": true }
+    ]
+  },
+  "activeIncidents": {
+    "count": 1,
+    "items": [
+      {
+        "severity": "warning",
+        "category": "resource",
+        "signal": "OOMKilled",
+        "persona": "api-server",
+        "namespace": "default",
+        "name": "im-default-api-oom-a3f2",
+        "age": "2h"
+      }
+    ]
+  },
+  "pendingRemediations": { "count": 0 }
+}
+```
+
+<Note>
+  Requires `kubectl` in your PATH. Resource saturation data requires the Dorgu Operator and a `ClusterPersona` resource. Incident and remediation data requires `IncidentMemory` and `RemediationAction` CRDs — if these CRDs are not installed, those sections show zero counts.
+</Note>

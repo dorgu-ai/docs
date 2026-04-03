@@ -30,6 +30,10 @@ dorgu
 ├── sync                    Query operator state
 │   ├── status              Show sync health
 │   └── pull                Pull latest persona data
+├── health                  Show cluster health summary
+├── incidents               Manage and view cluster incidents
+│   ├── list                List incidents
+│   └── describe <name>     Show incident details
 ├── platform                Platform management
 │   └── serve               Start web UI dashboard
 └── version                 Show version info
@@ -43,6 +47,7 @@ These flags apply to all commands:
 |------|-------------|---------|
 | `--config` | Path to config file | `.dorgu.yaml` |
 | `--no-color` | Disable colored output | `false` |
+| `--json` | Output as JSON | `false` |
 
 ## Path argument
 

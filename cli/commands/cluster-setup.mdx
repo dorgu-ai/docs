@@ -17,14 +17,14 @@ The command reads the `ClusterPersona` to determine the cluster environment and 
 
 ## Blessed Stack
 
-| Component | Description |
-|-----------|-------------|
-| **cert-manager** | Automated TLS certificate management via Let's Encrypt or internal CAs |
-| **ingress-nginx** | HTTP/S ingress controller for routing external traffic |
-| **CloudNativePG** | PostgreSQL operator, required by OpenObserve for metadata storage |
-| **OpenObserve** | Unified observability platform — logs, metrics, and traces in one tool |
-| **Argo CD** | Declarative GitOps continuous delivery engine |
-| **External Secrets** | Sync secrets from cloud stores (AWS Secrets Manager, Vault, GCP Secret Manager) — optional |
+| Component | Version | Description |
+|-----------|---------|-------------|
+| **cert-manager** | v1.16.3 | Automated TLS certificate management via Let's Encrypt or internal CAs |
+| **ingress-nginx** | 4.11.3 | HTTP/S ingress controller for routing external traffic |
+| **CloudNativePG** | 0.23.0 | PostgreSQL operator, required by OpenObserve for metadata storage |
+| **OpenObserve** | 0.60.0 | Unified observability platform — logs, metrics, and traces in one tool |
+| **Argo CD** | 7.8.28 | Declarative GitOps continuous delivery engine |
+| **External Secrets** | 0.10.7 | Sync secrets from cloud stores (AWS Secrets Manager, Vault, GCP Secret Manager) — optional |
 
 ## Flags
 
@@ -45,7 +45,7 @@ The default `helm` driver performs an imperative installation. Each blessed stac
 
 The installation order respects dependency chains — for example, cert-manager is installed before ingress-nginx (which needs TLS), and CloudNativePG is installed before OpenObserve (which needs PostgreSQL).
 
-After installation, pod health checks run automatically to verify each component is ready (unless `--skip-validation` is set).
+After installation, pod health checks run automatically to verify each component is ready (unless `--skip-validation` is set). When validation is skipped, the final summary displays "Pods healthy: — (validation skipped)" instead of a numeric count.
 
 ```bash
 # Install the full stack with the default helm driver
@@ -80,29 +80,28 @@ dorgu cluster setup --driver gitops --dry-run
 
 ```
 dorgu-cluster-gitops/
-├── apps/
-│   └── app-of-apps.yaml            # Root ArgoCD Application
-├── components/
-│   ├── cert-manager/
-│   │   ├── application.yaml        # ArgoCD Application for cert-manager
-│   │   └── values.yaml             # Helm values
-│   ├── ingress-nginx/
-│   │   ├── application.yaml
-│   │   └── values.yaml
-│   ├── cloudnative-pg/
-│   │   ├── application.yaml
-│   │   └── values.yaml
-│   ├── openobserve/
-│   │   ├── application.yaml
-│   │   └── values.yaml
-│   ├── argocd/
-│   │   ├── application.yaml
-│   │   └── values.yaml
-│   └── external-secrets/
-│       ├── application.yaml
-│       └── values.yaml
-└── README.md
+├── README.md
+├── argocd/
+│   └── root-app.yaml                  # Root ArgoCD Application (App-of-Apps)
+└── clusters/
+    └── <cluster-name>/
+        ├── apps/
+        │   ├── cert-manager.yaml      # ArgoCD Application per component
+        │   ├── ingress-nginx.yaml
+        │   ├── cloudnative-pg.yaml
+        │   ├── openobserve.yaml
+        │   ├── argocd.yaml
+        │   └── external-secrets.yaml
+        └── values/
+            ├── cert-manager.yaml      # Helm values per component
+            ├── ingress-nginx.yaml
+            ├── cloudnative-pg.yaml
+            ├── openobserve.yaml
+            ├── argocd.yaml
+            └── external-secrets.yaml
 ```
+
+The cluster-scoped layout (`clusters/<name>/`) supports managing multiple clusters from a single repository. See the [GitOps Mode guide](/cli/guides/gitops-mode) for multi-cluster examples and day-2 operations.
 
 ## Examples
 
