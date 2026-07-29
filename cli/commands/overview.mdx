@@ -18,15 +18,19 @@ dorgu
 ├── persona                 Manage ApplicationPersona CRDs
 │   ├── generate [path]     Generate persona YAML
 │   ├── apply [path]        Apply persona to cluster
-│   └── status <name>       Check persona status
+│   ├── status <name>       Check persona status
+│   └── list                List personas across namespaces
 ├── cluster                 Manage ClusterPersona CRDs
 │   ├── init                Create a ClusterPersona
 │   ├── status [name]       View cluster status
-│   └── setup               Install production-ready stack
+│   ├── setup               Install production-ready stack
+│   └── info                Show access details for installed stack components
 ├── watch                   Real-time streaming (WebSocket)
 │   ├── personas            Watch persona updates
 │   ├── cluster             Watch cluster updates
-│   └── events              Watch validation events
+│   ├── events              Watch validation events
+│   ├── incidents           Watch IncidentMemory updates
+│   └── remediations        Watch RemediationAction updates
 ├── sync                    Query operator state
 │   ├── status              Show sync health
 │   └── pull                Pull latest persona data
@@ -34,10 +38,20 @@ dorgu
 ├── incidents               Manage and view cluster incidents
 │   ├── list                List incidents
 │   └── describe <name>     Show incident details
+├── remediation             Manage remediation proposals
+│   ├── list                List remediation proposals
+│   ├── diff <name>         Show the proposed change
+│   ├── approve <name>      Approve a pending remediation
+│   ├── reject <name>       Reject a remediation proposal
+│   └── heal <name>         Apply an approved remediation to the workload
 ├── platform                Platform management
 │   └── serve               Start web UI dashboard
 └── version                 Show version info
 ```
+
+<Note>
+  `dorgu incidents` has only `list` and `describe` — there is no `history` subcommand.
+</Note>
 
 ## Global flags
 

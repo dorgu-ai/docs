@@ -15,10 +15,14 @@ Install the operator from the OCI registry:
 
 ```bash
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  --version 0.3.0 \
+  --version 0.7.2 \
   --namespace dorgu-system \
   --create-namespace
 ```
+
+<Note>
+  This page pins an exact chart version for reproducibility. Check [operator releases](https://github.com/dorgu-ai/dorgu-operator/releases) for the newest chart, or omit `--version` to always install the latest.
+</Note>
 
 To customize the installation, create a `values.yaml` file:
 
@@ -42,7 +46,7 @@ Then install with your values:
 
 ```bash
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  --version 0.3.0 \
+  --version 0.7.2 \
   --namespace dorgu-system \
   --create-namespace \
   -f values.yaml
@@ -63,7 +67,7 @@ cd dorgu-operator
 make install
 
 # Deploy the operator
-make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.3.0
+make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.7.2
 ```
 
 To uninstall:

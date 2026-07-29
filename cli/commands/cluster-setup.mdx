@@ -17,11 +17,15 @@ The command reads the `ClusterPersona` to determine the cluster environment and 
 
 ## Blessed Stack
 
+<Note>
+  The versions below are upstream Helm chart versions for each third-party component — they are not Dorgu release versions.
+</Note>
+
 | Component | Version | Description |
 |-----------|---------|-------------|
 | **cert-manager** | v1.16.3 | Automated TLS certificate management via Let's Encrypt or internal CAs |
 | **ingress-nginx** | 4.11.3 | HTTP/S ingress controller for routing external traffic |
-| **CloudNativePG** | 0.23.0 | PostgreSQL operator, required by OpenObserve for metadata storage |
+| **CloudNativePG** | 0.24.0 | PostgreSQL operator, required by OpenObserve for metadata storage |
 | **OpenObserve** | 0.60.0 | Unified observability platform — logs, metrics, and traces in one tool |
 | **Argo CD** | 7.8.28 | Declarative GitOps continuous delivery engine |
 | **External Secrets** | 0.10.7 | Sync secrets from cloud stores (AWS Secrets Manager, Vault, GCP Secret Manager) — optional |
