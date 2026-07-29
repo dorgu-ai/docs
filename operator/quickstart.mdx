@@ -9,10 +9,11 @@ This guide walks you through installing the operator, creating a persona, and ob
 
 ```bash
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  --version 0.3.0 \
   --namespace dorgu-system \
   --create-namespace
 ```
+
+Omitting `--version` resolves the newest published chart. To pin an exact chart version, see the [installation guide](/operator/installation).
 
 Wait for the pod to be ready:
 

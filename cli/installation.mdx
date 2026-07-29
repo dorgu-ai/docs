@@ -11,11 +11,15 @@ Install the latest release using `go install`:
 go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest
 ```
 
-Or install a specific version:
+Or pin a specific version:
 
 ```bash
-go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.4.0
+go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.8.0
 ```
+
+<Note>
+  `v0.8.0` is the version this page is pinned to. Check [CLI releases](https://github.com/dorgu-ai/dorgu/releases) for the newest, or use `@latest` to always get it.
+</Note>
 
 Ensure `$GOPATH/bin` (or `$HOME/go/bin`) is in your `PATH`.
 
@@ -53,7 +57,8 @@ dorgu version
 Expected output:
 
 ```
-dorgu version v0.4.0 (commit: abc1234, built: 2026-03-22T00:00:00Z)
+dorgu version v0.8.0
+Build: d4d7983 @ 2026-07-09T01:15:55Z
 ```
 
 ## Next steps
