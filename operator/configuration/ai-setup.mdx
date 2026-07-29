@@ -1,0 +1,119 @@
+---
+title: "AI setup"
+description: "Enable AI diagnosis and AI remediation planning with your own Anthropic API key"
+---
+
+Dorgu's AI features are **optional and bring-your-own-key**. Detection, diagnosis, and rule-based remediation all work with no key at all — the AI layer adds root-cause enhancement and the ordered, multi-step remediation plans described in [Self-healing](/operator/features/self-healing).
+
+## What you are opting into
+
+<Info>
+  - **BYO key.** Dorgu does not proxy your traffic. You supply an Anthropic API key and pay Anthropic directly.
+  - **Anthropic only, operator-side.** The operator's AI diagnosis accepts `claude` or `gemini`; the AI **remediation planner** is Anthropic-only today and is skipped unless `llm.provider=claude`.
+  - **The key stays in your cluster.** It lives in a Kubernetes Secret in your namespace and is injected into the operator pod as the `ANTHROPIC_API_KEY` environment variable via `secretKeyRef`. The chart never passes it as a container argument.
+  - **Your cluster data goes to Anthropic only when AI is enabled.** With no provider configured, nothing leaves the cluster.
+  - **No key, no problem.** Rule-based detection, diagnosis, and remediation are the floor and are always on.
+</Info>
+
+## Enable it
+
+<Steps>
+  <Step title="Create the Secret">
+    Create the Secret out of band so the key never passes through Helm values:
+
+    ```bash
+    kubectl create secret generic dorgu-llm -n dorgu-system \
+      --from-literal=ANTHROPIC_API_KEY=sk-ant-...
+    ```
+
+    If the namespace does not exist yet, create it first with `kubectl create namespace dorgu-system`.
+  </Step>
+
+  <Step title="Install or upgrade the operator">
+    ```bash
+    helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+      -n dorgu-system --create-namespace \
+      --set healthCheck.enabled=true --set healthCheck.interval=30s \
+      --set metricsServer.enabled=true --set websocket.enabled=true \
+      --set llm.provider=claude \
+      --set llm.existingSecret=dorgu-llm --set llm.existingSecretKey=ANTHROPIC_API_KEY \
+      --set aiRemediation.enabled=true
+    ```
+
+    Omitting `--version` resolves the newest published chart. To pin an exact version, see the [installation guide](/operator/installation).
+  </Step>
+
+  <Step title="Verify">
+    ```bash
+    kubectl -n dorgu-system logs deploy/dorgu-operator | grep -i "AI "
+    ```
+
+    You are looking for two startup lines:
+
+    ```
+    AI diagnosis enabled {"provider": "claude"}
+    AI remediation planning enabled {"provider": "claude"}
+    ```
+
+    Both must appear. `AI diagnosis enabled` on its own means the planner did not start — check that `aiRemediation.enabled=true` and `llm.provider=claude`.
+  </Step>
+</Steps>
+
+<Note>
+  `healthCheck.enabled=true` is what turns the self-healing loop on at all. AI configuration without it gives you a correctly configured operator that has nothing to diagnose.
+</Note>
+
+## Values reference
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `llm.provider` | `""` | `claude` enables Anthropic. Empty disables AI entirely. `gemini` enables AI *diagnosis* only — the remediation planner requires `claude`. |
+| `llm.model` | `""` | Model override. Empty uses the provider default (`claude-sonnet-4-6` for the planner). |
+| `llm.existingSecret` | `""` | Name of a pre-created Secret holding the key. **Preferred.** |
+| `llm.existingSecretKey` | `ANTHROPIC_API_KEY` | Key within that Secret |
+| `llm.apiKey` | `""` | Dev only — a raw key, stored in a chart-managed Secret. Requires `createSecret=true`. |
+| `llm.createSecret` | `false` | When true and `apiKey` is set, the chart creates the Secret for you |
+| `aiRemediation.enabled` | `false` | Maps to `--enable-ai-remediation`. Only has effect when `llm.provider` is set. |
+
+<Warning>
+  Prefer `llm.existingSecret` in any shared or production cluster. `llm.apiKey` never reaches the pod spec — the chart still delivers it via `secretKeyRef` — but it *is* recorded in the Helm release, so `helm get values` and `helm template` will print the raw key to anyone with access. `existingSecret` keeps the key out of Helm entirely.
+</Warning>
+
+If neither `llm.existingSecret` nor a chart-managed Secret is configured, the chart renders no `env:` block, the operator finds no `ANTHROPIC_API_KEY`, and it logs `LLM provider configured but no API key found, AI diagnosis disabled` — then runs rule-based.
+
+## Egress
+
+The operator calls the Anthropic API directly from its pod. On a private cluster it needs outbound HTTPS — through a NAT gateway, an egress proxy, or whatever your network policy allows. If egress is blocked, AI planning fails and logs `AI remediation planning failed, falling back to rules`; the loop keeps working on the deterministic path.
+
+## Turn it off
+
+```bash
+# Keep AI diagnosis, drop the AI remediation planner
+helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  -n dorgu-system --reuse-values --set aiRemediation.enabled=false
+
+# Drop AI entirely
+helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  -n dorgu-system --reuse-values --set llm.provider=""
+```
+
+Either way the self-healing loop keeps running rule-based. Existing `RemediationAction` objects with `planSource: ai-anthropic` remain valid and reviewable; new proposals come back as `rule-based`.
+
+To remove the key from the cluster as well:
+
+```bash
+kubectl delete secret dorgu-llm -n dorgu-system
+```
+
+## CLI-side LLMs are separate
+
+The operator's AI is unrelated to the CLI's LLM configuration. `dorgu generate` can use OpenAI, Anthropic, Gemini, or Ollama from your laptop; none of that configuration reaches the operator, and the operator's key is never used by the CLI. See [LLM providers](/cli/configuration/llm-providers) for the full comparison.
+
+<CardGroup cols={2}>
+  <Card title="Self-healing" icon="heart-pulse" href="/operator/features/self-healing">
+    What the AI planner actually receives and produces
+  </Card>
+  <Card title="Helm values" icon="helm" href="/operator/configuration/helm-values">
+    Every chart value in one place
+  </Card>
+</CardGroup>

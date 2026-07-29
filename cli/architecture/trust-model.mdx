@@ -18,20 +18,46 @@ Dorgu uses a progressive trust model that governs how much autonomy the system h
 
 ## Current Implementation
 
-Dorgu currently operates at **Levels 0 through 2**.
+Dorgu implements **Levels 0 through 2**. Levels 3 through 5 are planned.
 
 **CLI (Level 1-2: RECOMMEND / PROPOSE)**
 - Analyzes application source code and generates Kubernetes manifests
 - Produces ApplicationPersona CRDs that describe the desired operational profile
 - Proposes changes by generating files that a human reviews, commits, and deploys through existing GitOps workflows
+- **Applies an approved remediation to the running workload.** When you run `dorgu remediation approve`, the CLI translates the fix you reviewed into a Deployment patch and applies it with your credentials — after showing you the exact namespace, Deployment, container, and fields, and asking for confirmation
 
 **Operator (Level 0-2: OBSERVE / RECOMMEND / PROPOSE)**
-- Observes cluster state by watching Deployments, Pods, and integration resources (ArgoCD, Prometheus)
+- Observes cluster state by watching Deployments, Pods, Nodes, and integration resources (ArgoCD, Prometheus)
+- Detects incidents, diagnoses root cause, and proposes an ordered fix as a `RemediationAction` — always in phase `Pending`, always requiring human approval
 - Validates running workloads against their ApplicationPersona constraints
 - Recommends improvements by writing suggestions to the persona's `status.recommendations` field
 - Proposes changes through admission webhook warnings (advisory mode) or denials (enforcing mode)
+- Applies an **approved** remediation's patch to the ApplicationPersona spec, then verifies the outcome and rolls it back automatically if health regresses
 
-At no point does either the CLI or the Operator autonomously deploy, scale, or modify your workloads.
+Neither the CLI nor the Operator ever deploys, scales, or modifies a workload without a human decision.
+
+### Level 2 in practice
+
+The healing loop is what Level 2 looks like end to end:
+
+<Steps>
+  <Step title="The operator proposes">
+    A `RemediationAction` is created in `Pending` with `approval.required: true`, an ordered plan, per-step diffs, risk levels, and a confidence score. Nothing has changed in your cluster.
+  </Step>
+  <Step title="You review">
+    `dorgu remediation diff` shows the whole proposal. You approve or reject.
+  </Step>
+  <Step title="Approval splits by authority">
+    The operator, with its own service account, patches the ApplicationPersona spec — the desired-state record. The CLI, with **your** credentials, patches the Deployment. The privilege to change a workload never leaves your hands.
+  </Step>
+  <Step title="The operator verifies">
+    It waits out the verification window, re-runs detection, and either completes the remediation or restores the pre-patch state.
+  </Step>
+</Steps>
+
+<Note>
+  **Auto-approve graduation is not implemented.** The `ClusterPersona` carries `policies.selfHealing.mode` (`observe`, `propose`, `auto-approve`) and `trustLevel` (0–5), and `RemediationAction` carries `approval.autoApproveRule` — but controllers ignore all three when deciding whether approval is needed. Every remediation waits for a human, regardless of what the mode says. `maxRemediationsPerHour` and `excludeNamespaces` on that same policy *are* enforced.
+</Note>
 
 ## Non-Negotiable Invariant
 
@@ -43,8 +69,9 @@ The Operator is permitted to:
 
 - **Read** cluster state (Deployments, Pods, Nodes, ArgoCD Applications, Prometheus metrics)
 - **Validate** workloads against Persona constraints
-- **Recommend** changes via status fields and webhook warnings
+- **Recommend** changes via status fields, webhook warnings, and `RemediationAction` proposals
 - **Update** Persona CRD status and learned fields
+- **Patch** the ApplicationPersona `spec` — but only the fields in a `RemediationAction` a human has approved
 
 The Operator is **not** permitted to:
 

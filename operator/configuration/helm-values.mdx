@@ -20,13 +20,23 @@ webhook:
   mode: advisory
   port: 9443
 
+validation:
+  requeueInterval: 60s
+
 leaderElection:
   enabled: true
+
+operator:
+  autoCreateClusterPersona: true
+  clusterPersonaEnsureInterval: ""
 
 metrics:
   enabled: true
   bindAddress: ":8443"
   secure: true
+
+healthProbe:
+  bindAddress: ":8081"
 
 argocd:
   enabled: true
@@ -38,6 +48,27 @@ prometheus:
 websocket:
   enabled: false
   port: 9090
+  service:
+    type: ClusterIP
+    port: 9090
+
+healthCheck:
+  enabled: false
+  interval: 60s
+
+metricsServer:
+  enabled: true
+
+llm:
+  provider: ""
+  model: ""
+  existingSecret: ""
+  existingSecretKey: "ANTHROPIC_API_KEY"
+  apiKey: ""
+  createSecret: false
+
+aiRemediation:
+  enabled: false
 
 resources:
   limits:
@@ -90,13 +121,53 @@ affinity: {}
 The webhook requires TLS certificates. In production, use cert-manager to provision certificates automatically. The Helm chart includes the necessary annotations when cert-manager is available.
 </Info>
 
-### Metrics
+### Self-healing
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `healthCheck.enabled` | bool | `false` | Enable the health-check reconciler — detection, diagnosis, and remediation proposals. **This is the switch that turns self-healing on.** |
+| `healthCheck.interval` | duration | `60s` | How often the reconciler runs a detection cycle |
+| `metricsServer.enabled` | bool | `true` | Enable metrics-server integration for container-level CPU/memory detection |
+
+When `healthCheck.enabled` is `false`, the operator still validates personas and discovers the cluster — it just never opens incidents or proposes fixes. Setting `metricsServer.enabled=false` passes `--enable-metrics-server=false`; OOM and crash-loop detection read pod status and are unaffected, but usage and saturation signals go dark. See [Self-healing](/operator/features/self-healing).
+
+### AI
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `llm.provider` | string | `""` | `claude` enables Anthropic. Empty disables AI. `gemini` enables AI *diagnosis* only — the remediation planner requires `claude`. |
+| `llm.model` | string | `""` | Model override. Empty uses the provider default (`claude-sonnet-4-6` for the planner). |
+| `llm.existingSecret` | string | `""` | Name of a pre-created Secret holding the API key. **Preferred.** |
+| `llm.existingSecretKey` | string | `ANTHROPIC_API_KEY` | Key within that Secret |
+| `llm.apiKey` | string | `""` | Dev only — raw key, requires `createSecret=true` |
+| `llm.createSecret` | bool | `false` | When true and `apiKey` is set, the chart creates the Secret |
+| `aiRemediation.enabled` | bool | `false` | Maps to `--enable-ai-remediation`. Only takes effect when `llm.provider` is set. |
+
+The key is always delivered to the pod as the `ANTHROPIC_API_KEY` environment variable via `secretKeyRef` — the chart never passes it as a container argument. See [AI setup](/operator/configuration/ai-setup) for the full walkthrough and the caveat about `llm.apiKey` being visible in `helm get values`.
+
+### Bootstrap
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `operator.autoCreateClusterPersona` | bool | `true` | Auto-create a ClusterPersona named `dorgu-cluster` on startup if none exists |
+| `operator.clusterPersonaEnsureInterval` | duration | `""` (operator default `2m`) | How often the operator re-ensures that persona exists. Clamped to a 30s minimum. Only applies when `autoCreateClusterPersona` is `true`. |
+
+Set `autoCreateClusterPersona: false` if you manage ClusterPersonas through GitOps and do not want the operator creating one.
+
+### Validation
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `validation.requeueInterval` | duration | `60s` | How often the ApplicationPersona controller re-validates |
+
+### Metrics and probes
 
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
 | `metrics.enabled` | bool | `true` | Enable metrics endpoint |
 | `metrics.bindAddress` | string | `:8443` | Metrics server bind address |
 | `metrics.secure` | bool | `true` | Serve metrics over HTTPS with authentication |
+| `healthProbe.bindAddress` | string | `:8081` | Health and readiness probe bind address |
 
 ### ArgoCD
 
@@ -121,8 +192,10 @@ Example: `http://prometheus-server.monitoring:9090`
 |-------|------|---------|-------------|
 | `websocket.enabled` | bool | `false` | Enable WebSocket server for CLI communication |
 | `websocket.port` | int | `9090` | WebSocket server port |
+| `websocket.service.type` | string | `ClusterIP` | Service type for the WebSocket endpoint |
+| `websocket.service.port` | int | `9090` | Service port |
 
-When enabled, the chart creates a ClusterIP Service on the specified port.
+When enabled, the chart creates a Service on the specified port.
 
 ### Resources
 
@@ -141,10 +214,38 @@ When enabled, the chart creates a ClusterIP Service on the specified port.
 | `serviceAccount.name` | string | Release name | Service account name override |
 | `serviceAccount.annotations` | object | `{}` | Service account annotations (e.g., for IRSA) |
 
+## Example: AI self-healing
+
+Create the Secret out of band, then:
+
+```yaml
+healthCheck:
+  enabled: true
+  interval: 30s
+
+metricsServer:
+  enabled: true
+
+websocket:
+  enabled: true
+
+llm:
+  provider: claude
+  existingSecret: dorgu-llm
+  existingSecretKey: ANTHROPIC_API_KEY
+
+aiRemediation:
+  enabled: true
+```
+
 ## Example: Production deployment
 
 ```yaml
 replicaCount: 2
+
+healthCheck:
+  enabled: true
+  interval: 30s
 
 leaderElection:
   enabled: true
@@ -188,6 +289,12 @@ affinity:
 <CardGroup cols={2}>
   <Card title="Configuration overview" icon="gear" href="/operator/configuration/overview">
     Feature matrix and CLI flags
+  </Card>
+  <Card title="AI setup" icon="sparkles" href="/operator/configuration/ai-setup">
+    Key handling, verification, and turning AI off
+  </Card>
+  <Card title="Self-healing" icon="heart-pulse" href="/operator/features/self-healing">
+    What the health-check reconciler does once enabled
   </Card>
   <Card title="Installation" icon="download" href="/operator/installation">
     Install the operator with these values

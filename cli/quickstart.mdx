@@ -1,113 +1,232 @@
 ---
 title: Quickstart
-description: Generate Kubernetes manifests in 5 minutes
+description: Break an app and watch Dorgu diagnose and heal it — in under 15 minutes
 ---
 
-<Snippet file="prerequisites.mdx" />
+This is the fastest path to seeing Dorgu work: install it, deliberately deploy an app with too little memory, and watch the loop detect the OOM, diagnose it, propose a fix, and heal the workload once you approve.
 
-## Get started
+<Info>
+  **Prerequisites:**
+  - A Kubernetes cluster you can install into, and `kubectl` pointed at it
+  - Helm 3
+  - Go 1.21+ with `$GOPATH/bin` (or `$HOME/go/bin`) on your `PATH`
+  - An Anthropic API key — optional. Without one, everything below still works; the plan comes back rule-based instead of AI-written.
+</Info>
 
-<Steps>
-  <Step title="Install the CLI">
-    <Snippet file="installation-go.mdx" />
-  </Step>
+<Warning>
+  Use a development cluster. `dorgu remediation heal` refuses to run if your kube-context name contains `prod`, but the safest habit is to try this somewhere disposable.
+</Warning>
 
-  <Step title="Set up global config">
-    Configure your LLM provider and defaults (optional but recommended):
+## 1. Install the CLI
 
-    ```bash
-    dorgu init --global
-    ```
-
-    This prompts for:
-    - **LLM provider** — `openai`, `anthropic`, `gemini`, or `ollama`
-    - **API key** — your provider API key
-    - **Default namespace** — Kubernetes namespace (e.g., `default`)
-    - **Container registry** — e.g., `ghcr.io/my-org`
-    - **Organization name** — for Kubernetes labels
-
-    Config is saved to `~/.config/dorgu/config.yaml`.
-  </Step>
-
-  <Step title="Initialize your app">
-    Navigate to your application directory (must contain a `Dockerfile` or `docker-compose.yml`):
-
-    ```bash
-    cd my-app
-    dorgu init
-    ```
-
-    This creates a `.dorgu.yaml` file with app name, team, repository (auto-detected from git), and other metadata.
-  </Step>
-
-  <Step title="Generate manifests">
-    ```bash
-    dorgu generate .
-    ```
-
-    Dorgu analyzes your application and outputs:
-
-    ```
-    my-app/
-    ├── k8s/
-    │   ├── deployment.yaml
-    │   ├── service.yaml
-    │   ├── ingress.yaml
-    │   ├── hpa.yaml
-    │   └── argocd/
-    │       └── application.yaml
-    ├── .github/workflows/
-    │   └── deploy.yaml
-    └── PERSONA.md
-    ```
-
-    A validation report runs automatically, checking resource bounds, port consistency, health probes, and security contexts.
-  </Step>
-</Steps>
-
-## Preview with dry run
-
-Print generated manifests to stdout without writing files:
+<Snippet file="installation-go.mdx" />
 
 ```bash
-dorgu generate . --dry-run
+dorgu version
 ```
 
-## Use LLM-enhanced analysis
-
-For deeper analysis (framework-specific recommendations, resource sizing, security practices):
+## 2. Install the operator with self-healing on
 
 ```bash
-dorgu generate . --llm-provider openai
+kubectl create namespace dorgu-system
+
+# Optional — enables AI diagnosis and AI-written plans
+kubectl create secret generic dorgu-llm -n dorgu-system \
+  --from-literal=ANTHROPIC_API_KEY=sk-ant-...
+
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  -n dorgu-system \
+  --set healthCheck.enabled=true --set healthCheck.interval=30s \
+  --set llm.provider=claude \
+  --set llm.existingSecret=dorgu-llm --set llm.existingSecretKey=ANTHROPIC_API_KEY \
+  --set aiRemediation.enabled=true
 ```
 
-This requires an API key set via `dorgu init --global` or the `OPENAI_API_KEY` environment variable. See [LLM Providers](/cli/configuration/llm-providers) for all supported providers.
+Drop the three `llm`/`aiRemediation` flags if you are running without a key.
 
-## Output walkthrough
+```bash
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=dorgu-operator \
+  -n dorgu-system --timeout=120s
+```
 
-| File | Description |
-|------|-------------|
-| `k8s/deployment.yaml` | Kubernetes Deployment with resource limits, health probes, security context |
-| `k8s/service.yaml` | ClusterIP Service mapping detected ports |
-| `k8s/ingress.yaml` | Ingress with TLS via cert-manager (if configured) |
-| `k8s/hpa.yaml` | HorizontalPodAutoscaler with CPU-based scaling |
-| `k8s/argocd/application.yaml` | ArgoCD Application pointing to your repo |
-| `.github/workflows/deploy.yaml` | GitHub Actions CI/CD pipeline (build, push, deploy) |
-| `PERSONA.md` | Human-readable persona document describing your app |
+<Note>
+  `healthCheck.enabled=true` is the flag that turns the loop on — it is off by default. See [AI setup](/operator/configuration/ai-setup) for verifying that the AI planner started.
+</Note>
+
+The operator auto-creates a `ClusterPersona` named `dorgu-cluster` on startup and discovers your nodes, add-ons, and capacity:
+
+```bash
+dorgu health
+```
+
+## 3. Deploy an app that will break
+
+Save this as `demo-oom.yaml`. It is a container that allocates ~90 MB against a 64Mi limit, so the kernel OOM-kills it within seconds.
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+---
+apiVersion: dorgu.io/v1
+kind: ApplicationPersona
+metadata:
+  name: memhog
+  namespace: demo
+spec:
+  name: memhog
+  version: "1"
+  type: worker
+  tier: standard
+  technical:
+    language: shell
+    description: Deliberate memory hog used to demonstrate OOM self-healing.
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "32Mi"
+    limits:
+      cpu: "200m"
+      memory: "64Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memhog
+  namespace: demo
+  labels:
+    app.kubernetes.io/name: memhog
+    app: memhog
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: memhog
+  template:
+    metadata:
+      labels:
+        app: memhog
+        app.kubernetes.io/name: memhog
+    spec:
+      containers:
+        - name: memhog
+          image: polinux/stress
+          command: ["stress"]
+          args: ["--vm", "1", "--vm-bytes", "90M", "--vm-hang", "0", "--timeout", "600s"]
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "32Mi"
+            limits:
+              cpu: "200m"
+              memory: "64Mi"
+```
+
+```bash
+kubectl apply -f demo-oom.yaml
+kubectl -n demo get pods -l app=memhog -w
+```
+
+Within a few seconds the pod goes `OOMKilled`, then `CrashLoopBackOff`. Left alone, Kubernetes would restart it forever.
+
+<Warning>
+  Three details in that manifest are load-bearing:
+
+  1. **The persona is named `memhog`, exactly like the Deployment.** The operator correlates signals to personas by name prefix — pods are `memhog-<hash>`, so the persona must be `memhog`. Rename one and no incident gets a persona, and no fix is ever proposed.
+  2. **The persona declares `resources.limits`.** Without a current limit the proposer has nothing to compute a bounded change from, and skips.
+  3. **The allocation fits after the fix.** Increases are capped at 2×, so 64Mi becomes at most 128Mi — and ~90 MB fits in 128Mi. One approval heals it.
+</Warning>
+
+## 4. Watch Dorgu detect and diagnose it
+
+Wait one detection cycle — 30 seconds with the settings above — then:
+
+```bash
+dorgu health
+dorgu incidents list -n demo
+```
+
+You will see incidents for `OOMKilled` and `CrashLoopBackOff`. Two symptoms, one root cause. Read the diagnosis:
+
+```bash
+dorgu incidents describe <incident-name> -n demo
+```
+
+The **Root Cause** section carries the summary, the confidence score, and the provider — `ai-enhanced` when Claude ran, `rule-based` otherwise.
+
+## 5. Review the proposed fix
+
+```bash
+dorgu remediation list -n demo
+```
+
+One row, with `PLAN: ai-anthropic` if AI planning is on. Now read the actual plan:
+
+```bash
+dorgu remediation diff <remediation-name> -n demo
+```
+
+This is the review surface: the plan summary, then each step in execution order with its rationale, risk level, whether it is auto-applied or advisory, and a YAML diff of the change. The first step raises the memory limit; the follow-up steps are advisory. See [`dorgu remediation`](/cli/commands/remediation#remediation-diff) for a full annotated example.
+
+## 6. Approve — and watch it heal
+
+```bash
+dorgu remediation approve <remediation-name> -n demo
+```
+
+Two things happen. The operator patches the `ApplicationPersona` spec — the app's desired-state record. Then the CLI shows you exactly which Deployment, container, and fields it is about to change, asks for confirmation, and patches the Deployment with **your** credentials. Add `--yes` to skip the prompt.
+
+```bash
+kubectl rollout status deploy/memhog -n demo --timeout=120s
+kubectl -n demo get pods -l app=memhog
+```
+
+The pod comes back `1/1 Running` with no new restarts. That is the aha.
+
+## 7. It is remembered
+
+```bash
+kubectl -n demo get incidentmemory,remediationaction
+```
+
+The records persist in your cluster. Next time a similar problem appears, the planner has this incident — and whether this fix actually worked — as context.
+
+<Note>
+  The remediation will read `Applying` or `Verifying` for the next ~10 minutes, and the incident stays open until then. That is the verification window: the operator re-runs detection at the end of it and automatically rolls the change back if health regressed. Your pod is already healthy — the wait is what makes the rollback guarantee real.
+</Note>
+
+## Clean up
+
+```bash
+kubectl delete namespace demo
+```
+
+## Also: generate manifests
+
+Manifest generation is Dorgu's other half. Point the CLI at any app with a `Dockerfile` or `docker-compose.yml`:
+
+```bash
+cd my-app
+dorgu init
+dorgu generate .
+```
+
+Dorgu analyzes the app and writes a Deployment, Service, Ingress, HPA, ArgoCD Application, a GitHub Actions workflow, and an ApplicationPersona — the same kind of persona the self-healing loop above operates on. Use `--dry-run` to print instead of write, and `--llm-provider openai` (or `anthropic`, `gemini`, `ollama`) for LLM-enhanced analysis. See the [manifest generation guide](/cli/guides/manifest-generation).
 
 ## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Command Reference" icon="book" href="/cli/commands/generate">
-    See all flags and options for `dorgu generate`.
+  <Card title="Self-healing in depth" icon="heart-pulse" href="/operator/features/self-healing">
+    Detection signals, guardrails, verification, and troubleshooting
   </Card>
-  <Card title="Configuration" icon="sliders" href="/cli/configuration/overview">
-    Customize manifests with layered configuration.
+  <Card title="dorgu remediation" icon="terminal" href="/cli/commands/remediation">
+    Every flag for list, diff, approve, reject, and heal
   </Card>
-  <Card title="Cluster Setup" icon="server" href="/cli/guides/cluster-onboarding">
-    Bootstrap a production-ready Kubernetes stack.
+  <Card title="AI setup" icon="sparkles" href="/operator/configuration/ai-setup">
+    Key handling, verification, and how to turn AI off
   </Card>
-  <Card title="Working with Personas" icon="id-card" href="/cli/guides/working-with-personas">
-    Apply ApplicationPersona CRDs to your cluster.
+  <Card title="Working with personas" icon="id-card" href="/cli/guides/working-with-personas">
+    Write the personas the loop depends on
   </Card>
 </CardGroup>

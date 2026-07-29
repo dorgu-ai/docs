@@ -53,6 +53,25 @@ dorgu
   `dorgu incidents` has only `list` and `describe` — there is no `history` subcommand.
 </Note>
 
+## Command reference
+
+The command tree above is a plain listing. Use these links for the full flag reference on each command group.
+
+| Command | Reference | What it does |
+|---------|-----------|--------------|
+| `dorgu generate` | [generate](/cli/commands/generate) | Analyze an app and generate Kubernetes manifests |
+| `dorgu init` | [init](/cli/commands/init) | Initialize app, workspace, or global configuration |
+| `dorgu config` | [config](/cli/commands/config) | Read and write configuration values |
+| `dorgu persona` | [persona](/cli/commands/persona) | Generate, apply, and inspect ApplicationPersona CRDs |
+| `dorgu cluster` | [cluster](/cli/commands/cluster) · [cluster setup](/cli/commands/cluster-setup) | Manage the ClusterPersona and bootstrap a cluster stack |
+| `dorgu watch` | [watch](/cli/commands/watch) | Stream personas, cluster, events, incidents, and remediations |
+| `dorgu sync` | [sync](/cli/commands/sync) | Query operator state |
+| `dorgu health` | [health](/cli/commands/health) | Cluster health summary |
+| `dorgu incidents` | [incidents](/cli/commands/incidents) | List and inspect detected incidents |
+| `dorgu remediation` | [remediation](/cli/commands/remediation) | Review, approve, reject, and apply proposed fixes |
+| `dorgu platform` | [platform](/cli/commands/platform) | Serve the web dashboard |
+| `dorgu version` | [version](/cli/commands/version) | Show version info |
+
 ## Global flags
 
 These flags apply to all commands:
