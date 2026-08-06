@@ -243,7 +243,7 @@ The ClusterPersona controller reconciles every 5 minutes, scanning nodes, namesp
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `true` | Activates the healing system |
+| `enabled` | bool | `true` | Not yet implemented — see the note below |
 | `mode` | enum | `propose` | `observe`, `propose`, or `auto-approve` |
 | `trustLevel` | int | `2` | Progressive trust level, 0–5 |
 | `maxRemediationsPerHour` | int | `5` | Rate limit per persona |
@@ -253,7 +253,7 @@ The ClusterPersona controller reconciles every 5 minutes, scanning nodes, namesp
 | `rollback.maxRetries` | int | `1` | Rollback attempt limit |
 
 <Note>
-  `maxRemediationsPerHour` and `excludeNamespaces` are enforced by the safety checker. `mode` and `trustLevel` are recorded and fed to the AI planner as context, but no code path gates behavior on them today — approval is always required. The operator's auto-created persona uses `mode: observe`.
+  `mode` is enforced by the proposer: `observe` records the incident and proposes nothing, `propose` proposes with approval required, and `auto-approve` is **not implemented** — it is accepted but degraded to `propose` with a warning. `maxRemediationsPerHour` and `excludeNamespaces` are enforced by the safety checker. `enabled` and `trustLevel` are **not** enforced: `trustLevel` is only fed to the AI planner as context, and detection/diagnosis/proposal run regardless of `enabled` — use `mode: observe` to stop at diagnosis. The operator's auto-created persona uses `mode: propose`.
 </Note>
 
 ## IncidentMemory

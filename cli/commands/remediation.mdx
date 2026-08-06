@@ -60,7 +60,6 @@ Lists `RemediationAction` resources. By default it shows only active ones — `P
 |------|------|---------|-------------|
 | `-n, --namespace` | string | all namespaces | Filter by namespace |
 | `--phase` | string | all | Filter by exact phase (`Pending`, `Approved`, `Applying`, `Verifying`, `Completed`, …) |
-| `--severity` | string | all | Filter by severity (`info`, `warning`, `critical`) |
 | `--all` | bool | `false` | Include completed, rolled-back, rejected, and expired remediations |
 | `--limit` | int | `50` | Maximum number of remediations to show |
 | `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
@@ -71,8 +70,8 @@ Lists `RemediationAction` resources. By default it shows only active ones — `P
 ```
 Active Remediations (1)
 
-NAMESPACE   NAME                PHASE    TYPE            PLAN          STEPS  SEVERITY  CONFIDENCE  PERSONA     AGE
-production  fix-oom-api-server  Pending  persona-update  ai-anthropic  3                0.85        api-server  4m
+NAMESPACE   NAME                PHASE    TYPE            PLAN          STEPS  CONFIDENCE  PERSONA     AGE
+production  fix-oom-api-server  Pending  persona-update  ai-anthropic  3      0.85        api-server  4m
 ```
 
 ### Output columns
@@ -85,13 +84,12 @@ production  fix-oom-api-server  Pending  persona-update  ai-anthropic  3        
 | TYPE | `spec.action.type` — `persona-update`, `notification`, or `git-pr` |
 | PLAN | `ai-anthropic` when Claude wrote the plan, `rule-based` when the deterministic rules did, `-` for older objects that carry no ordered plan |
 | STEPS | Number of ordered steps in the plan, or `-` for a single-action object |
-| SEVERITY | Legacy field — see the note below |
 | CONFIDENCE | Diagnosis confidence as a decimal string, e.g. `0.85` |
 | PERSONA | Name of the persona being remediated |
 | AGE | Time since the RemediationAction was created |
 
 <Note>
-  **SEVERITY renders blank.** `severity` is a legacy CLI-side field that the current operator's `RemediationAction` CRD does not set, so the column is empty and `--severity` matches nothing against objects created by the operator. Filter by `--phase` or read severity from the linked incident with [`dorgu incidents describe`](/cli/commands/incidents) instead.
+  **There is no severity here.** `RemediationAction` carries no `severity` field, so this command cannot filter or sort by it — the blank `SEVERITY` column and the `--severity` flag that matched nothing were both removed. Filter by `--phase`, and read severity from the linked incident with [`dorgu incidents describe`](/cli/commands/incidents), where `--severity` does work.
 </Note>
 
 ### Examples
@@ -224,7 +222,7 @@ Advisory steps (`restart`, `scale`, `config-change`, `manual`, and any `persona-
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-n, --namespace` | string | required unless `--next` | Namespace of the remediation |
-| `--next` | bool | `false` | Pick a pending remediation automatically instead of naming one |
+| `--next` | bool | `false` | Approve the oldest pending remediation instead of naming one |
 | `--reason` | string | `""` | Optional approval reason, echoed in the success message |
 | `--heal` | bool | `true` | After approval, apply the resource change to the workload |
 | `--no-heal` | bool | `false` | Skip the workload heal; only patch the RemediationAction status |
@@ -236,7 +234,7 @@ Advisory steps (`restart`, `scale`, `config-change`, `manual`, and any `persona-
 `--heal` and `--no-heal` are mutually exclusive.
 
 <Note>
-  `--next` ranks pending remediations by severity and takes the top one. Because the operator does not set `severity` today, all pending actions rank equally — treat `--next` as "one of the pending remediations", and name the resource explicitly when it matters.
+  `--next` takes the **oldest** pending remediation, so the longest-waiting incident goes first; ties break on namespace and name, making the pick reproducible. It previously ranked by severity, which `RemediationAction` does not carry — every candidate tied, so the winner was effectively arbitrary.
 </Note>
 
 ### Examples
