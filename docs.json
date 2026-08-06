@@ -35,6 +35,7 @@
               "cli/commands/sync",
               "cli/commands/health",
               "cli/commands/incidents",
+              "cli/commands/remediation",
               "cli/commands/platform",
               "cli/commands/version"
             ]
@@ -87,12 +88,14 @@
             "group": "Configuration",
             "pages": [
               "operator/configuration/overview",
+              "operator/configuration/ai-setup",
               "operator/configuration/helm-values"
             ]
           },
           {
             "group": "Features",
             "pages": [
+              "operator/features/self-healing",
               "operator/features/validation",
               "operator/features/cluster-discovery",
               "operator/features/webhook",

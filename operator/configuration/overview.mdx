@@ -11,6 +11,11 @@ The operator is configured through command-line flags, which map directly to Hel
 |---------|---------|------|-------------|
 | ApplicationPersona controller | Enabled | Always on | Validates deployments against persona constraints |
 | ClusterPersona controller | Enabled | Always on | Discovers cluster state and resource capacity |
+| Self-healing loop | Disabled | `--enable-health-check` | Detection, diagnosis, and remediation proposals |
+| AI diagnosis | Disabled | `--llm-provider` | LLM-enhanced root-cause analysis (requires an API key) |
+| AI remediation planner | Enabled *when* a provider and key are set | `--enable-ai-remediation` | Ordered, AI-written remediation plans (Anthropic only) |
+| Metrics-server integration | Enabled | `--enable-metrics-server` | Container-level CPU/memory signals |
+| ClusterPersona bootstrap | Enabled | `--auto-create-cluster-persona` | Auto-creates `dorgu-cluster` on startup |
 | ArgoCD watcher | Enabled | `--enable-argocd` | Watches ArgoCD Applications for sync status |
 | Validating webhook | Disabled | `--enable-webhook` | Intercepts Deployment create/update |
 | Prometheus integration | Disabled | `--prometheus-url` | Queries Prometheus for resource baselines |
@@ -48,6 +53,29 @@ The operator is configured through command-line flags, which map directly to Hel
 | `--metrics-cert-name` | string | `tls.crt` | Metrics certificate filename |
 | `--metrics-cert-key` | string | `tls.key` | Metrics private key filename |
 
+### Self-healing and AI
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--enable-health-check` | bool | `false` | Enable the health-check reconciler — detection, diagnosis, and remediation |
+| `--health-check-interval` | duration | `60s` | Detection cycle interval |
+| `--enable-metrics-server` | bool | `true` | Enable metrics-server integration for container-level detection |
+| `--llm-provider` | string | `""` | `claude` or `gemini` for AI-enhanced diagnosis. Empty disables AI. |
+| `--llm-api-key` | string | `""` | API key, overriding the `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` env vars |
+| `--llm-model` | string | `""` | Model override for the provider |
+| `--enable-ai-remediation` | bool | `true` | Enable AI-written ordered remediation plans. Requires `--llm-provider=claude` and a key; falls back to the deterministic rules otherwise. |
+
+<Info>
+The Helm chart never passes `--llm-api-key`. It injects the key as the `ANTHROPIC_API_KEY` environment variable from a Secret via `secretKeyRef`, so it stays out of the pod spec. See [AI setup](/operator/configuration/ai-setup).
+</Info>
+
+### Bootstrap
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--auto-create-cluster-persona` | bool | `true` | Auto-create a ClusterPersona named `dorgu-cluster` if none exists on startup |
+| `--cluster-persona-ensure-interval` | duration | `2m` | How often to re-ensure that persona exists. Clamped to a 30s minimum. |
+
 ### Integrations
 
 | Flag | Type | Default | Description |
@@ -70,6 +98,10 @@ The ArgoCD watcher only activates if both `--enable-argocd=true` **and** the Arg
   --leader-elect \
   --enable-webhook \
   --webhook-mode enforcing \
+  --enable-health-check \
+  --health-check-interval 30s \
+  --llm-provider claude \
+  --enable-ai-remediation \
   --enable-argocd \
   --prometheus-url http://prometheus-server.monitoring:9090 \
   --enable-websocket \

@@ -1,78 +1,71 @@
 ---
 title: "Quickstart"
-description: "Get the Dorgu Operator running and validate your first persona in 5 minutes"
+description: "Install the operator with AI self-healing on and watch it diagnose a real failure in 5 minutes"
 ---
 
-This guide walks you through installing the operator, creating a persona, and observing the operator validate it.
+This guide installs the Dorgu Operator with the self-healing loop and AI planning enabled, then walks a real incident from detection to healed.
 
-## Step 1: Install the operator
+## Step 1: Install the operator with self-healing on
+
+The self-healing loop is off by default. `healthCheck.enabled=true` turns it on.
 
 ```bash
+kubectl create namespace dorgu-system
+
+# Optional — enables AI diagnosis and AI-written remediation plans
+kubectl create secret generic dorgu-llm -n dorgu-system \
+  --from-literal=ANTHROPIC_API_KEY=sk-ant-...
+
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  --namespace dorgu-system \
-  --create-namespace
+  -n dorgu-system \
+  --set healthCheck.enabled=true --set healthCheck.interval=30s \
+  --set metricsServer.enabled=true \
+  --set llm.provider=claude \
+  --set llm.existingSecret=dorgu-llm --set llm.existingSecretKey=ANTHROPIC_API_KEY \
+  --set aiRemediation.enabled=true
 ```
 
-Omitting `--version` resolves the newest published chart. To pin an exact chart version, see the [installation guide](/operator/installation).
-
-Wait for the pod to be ready:
+Omitting `--version` resolves the newest published chart. To pin an exact chart version, see the [installation guide](/operator/installation). Drop the `llm` and `aiRemediation` flags to run rule-based — detection, diagnosis, and remediation all work without a key.
 
 ```bash
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=dorgu-operator \
-  -n dorgu-system --timeout=60s
+  -n dorgu-system --timeout=120s
 ```
 
-## Step 2: Create a ClusterPersona
-
-Initialize the cluster context so the operator knows about your cluster:
+Confirm the loop and the planner started:
 
 ```bash
-dorgu cluster init --name my-cluster --environment development
+kubectl -n dorgu-system logs deploy/dorgu-operator | grep -i "AI \|health check"
 ```
 
-Or apply directly:
+Look for `AI diagnosis enabled` and `AI remediation planning enabled`. See [AI setup](/operator/configuration/ai-setup) if either is missing.
 
-```yaml
-apiVersion: dorgu.io/v1
-kind: ClusterPersona
-metadata:
-  name: my-cluster
-spec:
-  name: my-cluster
-  environment: development
-```
+## Step 2: Confirm cluster discovery
 
-```bash
-kubectl apply -f clusterpersona.yaml
-```
-
-Check the discovery status:
+The operator auto-creates a cluster-scoped `ClusterPersona` named `dorgu-cluster` on startup and populates it with nodes, add-ons, capacity, Kubernetes version, and platform type — typically within seconds.
 
 ```bash
 dorgu cluster status
+dorgu health
 ```
 
-The operator discovers nodes, add-ons, and resource capacity within seconds.
+`dorgu health` should report your nodes `Ready`, resource saturation, control-plane health, and `Active Incidents: 0`.
 
-## Step 3: Deploy a sample application
+<Note>
+  On a managed cluster (EKS, GKE, AKS) the control plane is not visible as pods, so it is reported as `Healthy (external/managed)`. That is expected.
+</Note>
 
-Create a namespace and deploy a sample workload:
+To manage the ClusterPersona yourself via GitOps instead, install with `--set operator.autoCreateClusterPersona=false` and apply your own.
 
-```bash
-kubectl create namespace demo
-kubectl create deployment nginx --image=nginx:latest -n demo
-kubectl label deployment nginx app.kubernetes.io/name=nginx -n demo
-```
+## Step 3: Give the operator something to watch
 
-## Step 4: Apply an ApplicationPersona
-
-Generate and apply a persona for the sample application:
+The operator only acts on applications that have an `ApplicationPersona`, and it correlates signals to personas **by name prefix** — so the persona name must match the pod names.
 
 ```bash
 dorgu persona apply ./my-app -n demo
 ```
 
-Or apply a persona manifest directly:
+Or apply one directly:
 
 ```yaml
 apiVersion: dorgu.io/v1
@@ -85,6 +78,9 @@ spec:
   type: web
   tier: standard
   resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
     limits:
       cpu: 500m
       memory: 128Mi
@@ -100,39 +96,62 @@ spec:
       runAsNonRoot: true
 ```
 
-```bash
-kubectl apply -f persona.yaml
-```
-
-## Step 5: Check validation status
+<Warning>
+  Always declare `resources.limits`. Without a current limit the remediation proposer has no baseline to compute a bounded change from, and skips the persona with `persona has no resource limits configured`.
+</Warning>
 
 ```bash
 dorgu persona status nginx -n demo
 ```
 
-The operator reconciles the persona against the deployment and reports validation issues. For the sample above, you might see warnings like:
+The operator validates the running Deployment against the persona and reports issues in `.status.validation.issues` — missing resource requests, an unenforced `runAsNonRoot`, a missing liveness probe. The phase reflects the overall state (`Active`, `Degraded`, or `Failed`), and it re-validates every 60 seconds or immediately when the Deployment changes. See [validation](/operator/features/validation).
 
-- No resource requests set on container
-- Persona requires `runAsNonRoot` but Deployment does not enforce it
-- No liveness probe configured
+## Step 4: Break something and watch the loop
 
-These issues appear in `.status.validation.issues` and the phase reflects the overall state (`Active`, `Degraded`, or `Failed`).
+The fastest way to see self-healing work is a deliberate OOM. The [CLI quickstart](/cli/quickstart#3-deploy-an-app-that-will-break) has a ready-to-apply manifest: a container that allocates ~90 MB against a 64Mi limit, plus a matching persona.
 
-## Step 6: Fix issues and re-check
-
-Update the deployment to satisfy the persona constraints. The operator re-validates automatically every 60 seconds, or immediately when the deployment changes.
+Once it is crash-looping, one detection cycle later:
 
 ```bash
-dorgu persona status nginx -n demo
+dorgu incidents list -n demo                       # OOMKilled + CrashLoopBackOff
+dorgu incidents describe <incident-name> -n demo    # root cause, confidence, provider
+dorgu remediation list -n demo                      # one proposal, PLAN: ai-anthropic
+dorgu remediation diff <remediation-name> -n demo   # the ordered plan, with diffs
 ```
 
-When all validations pass, the phase transitions to `Active` and `.status.validation.passed` becomes `true`.
+## Step 5: Approve, and watch it heal
+
+```bash
+dorgu remediation approve <remediation-name> -n demo
+```
+
+The operator patches the `ApplicationPersona` spec — the app's desired state — and moves the remediation to `Applying`. The CLI then patches the Deployment with your credentials so the pod actually recovers.
+
+```bash
+kubectl -n demo get pods
+```
+
+<Note>
+  The remediation stays in `Applying` / `Verifying` for the verification window — 10 minutes by default — before it reports `Completed`. At the end of that window the operator re-runs detection and rolls the change back automatically if health regressed. Your pod is healthy well before then.
+</Note>
+
+<Warning>
+  The operator never creates or modifies Deployments, Services, or any other workload resource. It updates Persona, Incident, and Remediation CRDs and recommends; applying workload changes stays with the CLI, ArgoCD, Flux, or `kubectl`.
+</Warning>
+
+## Next steps
 
 <CardGroup cols={2}>
+  <Card title="Self-healing in depth" icon="heart-pulse" href="/operator/features/self-healing">
+    Signals, guardrails, verification, and troubleshooting
+  </Card>
+  <Card title="AI setup" icon="sparkles" href="/operator/configuration/ai-setup">
+    Key handling, verification, and turning AI off
+  </Card>
   <Card title="Validation details" icon="shield-check" href="/operator/features/validation">
-    Learn what the operator validates and how severity works
+    What the operator validates and how severity works
   </Card>
   <Card title="Configuration" icon="gear" href="/operator/configuration/overview">
-    Enable webhooks, ArgoCD, Prometheus, and WebSocket
+    Flags for webhooks, ArgoCD, Prometheus, and WebSocket
   </Card>
 </CardGroup>

@@ -1,6 +1,6 @@
 ---
 title: "LLM Providers"
-description: "Configure OpenAI, Anthropic, Gemini, or Ollama for enhanced analysis"
+description: "Configure OpenAI, Anthropic, Gemini, or Ollama for CLI-side analysis — and how that differs from the operator's AI"
 ---
 
 # LLM Providers
@@ -11,14 +11,33 @@ Dorgu can use large language models to enhance its application analysis. LLM int
 LLM enhancement is **optional**. Dorgu's static analysis and manifest generation work without any LLM provider configured. The LLM layer adds refinements on top of the base analysis.
 </Info>
 
+## Two separate AI surfaces
+
+Dorgu has two independent places where an LLM can run. They are configured separately, use different keys, and support different providers. This page covers the first.
+
+| | CLI-side | Operator-side |
+|---|---|---|
+| **What it does** | Enhances application analysis for manifest and persona generation | AI diagnosis of incidents, and AI-written ordered remediation plans |
+| **Providers** | OpenAI, Anthropic, Gemini, Ollama | **Anthropic only** for the remediation planner. AI diagnosis also accepts Gemini. |
+| **Where the key lives** | Your machine — an env var or `~/.config/dorgu/config.yaml` | A Kubernetes Secret in your cluster, injected as `ANTHROPIC_API_KEY` |
+| **Configured with** | `dorgu config set llm.provider …` or `--llm-provider` | Helm values `llm.provider`, `llm.existingSecret`, `aiRemediation.enabled` |
+| **Runs when** | You run `dorgu generate` | The operator's health-check reconciler detects an incident |
+| **Documented in** | This page | [AI setup](/operator/configuration/ai-setup) |
+
+<Warning>
+Configuring a CLI provider does **not** enable the operator's AI, and the operator's key is never used by the CLI. Setting `dorgu config set llm.provider anthropic` gives you LLM-enhanced manifest generation and nothing else. To get AI diagnosis and AI remediation plans, configure the operator as described in [AI setup](/operator/configuration/ai-setup).
+</Warning>
+
 ## Supported Providers
 
-| Provider | Models | Env Variable | Default Model |
-|----------|--------|--------------|---------------|
-| OpenAI | gpt-4, gpt-3.5-turbo | `OPENAI_API_KEY` | gpt-4 |
-| Anthropic | claude-3-sonnet | `ANTHROPIC_API_KEY` | claude-3-sonnet |
-| Gemini | gemini-1.5-pro | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | gemini-1.5-pro |
-| Ollama | any locally hosted model | `OLLAMA_HOST` (endpoint URL) | configurable |
+| Provider | Env Variable | Default Model |
+|----------|--------------|---------------|
+| OpenAI | `OPENAI_API_KEY` | `gpt-4-turbo-preview` |
+| Anthropic | `ANTHROPIC_API_KEY` | `claude-3-sonnet-20240229` |
+| Gemini | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | `gemini-2.5-flash` |
+| Ollama | `OLLAMA_HOST` (endpoint URL) | `llama2` |
+
+Override any of these with `dorgu config set llm.model <model>` or the `llm.model` key in `.dorgu.yaml`.
 
 ## What LLM Enhances
 
@@ -153,7 +172,18 @@ You can also set the LLM provider at the workspace or app level:
 # In .dorgu.yaml
 llm:
   provider: "openai"
-  model: "gpt-4"
+  model: "gpt-4-turbo-preview"
 ```
 
 This is useful when different projects require different providers or models.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Operator AI setup" icon="sparkles" href="/operator/configuration/ai-setup">
+    The other AI surface: AI diagnosis and AI remediation plans, Anthropic only
+  </Card>
+  <Card title="Self-healing" icon="heart-pulse" href="/operator/features/self-healing">
+    What the operator's AI planner receives and produces
+  </Card>
+</CardGroup>

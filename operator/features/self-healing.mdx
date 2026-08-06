@@ -1,0 +1,193 @@
+---
+title: "Self-healing"
+description: "How Dorgu detects incidents, diagnoses root cause, proposes an ordered fix, and heals with your approval"
+---
+
+Vanilla Kubernetes restarts a crash-looping pod forever. It never asks *why*. Dorgu's self-healing loop closes that gap: it detects the failure, diagnoses the root cause, proposes a reviewable fix, and — once you approve — heals the workload and remembers the outcome.
+
+Code detects. AI explains. A human approves.
+
+## The loop
+
+```mermaid
+flowchart LR
+    D["Detect<br/>health-check reconciler"] --> DG["Diagnose<br/>rules + optional AI"]
+    DG --> P["Propose<br/>ordered plan"]
+    P --> A["Approve<br/>you"]
+    A --> H["Heal<br/>persona + workload"]
+    H --> R["Remember<br/>IncidentMemory"]
+    R -.->|"context for next time"| P
+```
+
+| Stage | Owner | Output |
+|-------|-------|--------|
+| Detect | Health-check reconciler | Signals |
+| Diagnose | Rule-based provider, optionally AI-enhanced | Root cause + confidence, stored on `IncidentMemory` |
+| Propose | Rule-based proposer, optionally the AI planner | `RemediationAction` with an ordered `steps[]` plan |
+| Approve | You, via `dorgu remediation approve` | `phase: Approved` |
+| Heal | Operator (persona spec) + CLI (Deployment) | The pod recovers |
+| Remember | Operator | `IncidentMemory.spec.resolution` with the outcome |
+
+<Warning>
+  **The invariant.** The operator never creates or modifies Deployments, Services, or any other workload resource. It reads cluster state, updates the Persona / Incident / Remediation CRDs, and recommends. Applying workload changes stays with ArgoCD, Flux, `kubectl`, or the Dorgu CLI — which uses **your** credentials, not the operator's.
+</Warning>
+
+## Detect
+
+The health-check reconciler runs on a fixed interval — 60 seconds by default, and 30 seconds is a reasonable setting for a tight loop. It collects signals from every detector, correlates them to an `ApplicationPersona`, and opens or updates an `IncidentMemory`.
+
+| Category | Signals |
+|----------|---------|
+| Pod | `OOMKilled`, `CrashLoopBackOff`, `ImagePullBackOff`, `PodEvicted`, `PodPendingLong` (5 min), `ProbeFailure`, `ContainerHighRestarts` |
+| Resource | `CPUSaturationHigh` / `Critical`, `MemorySaturationHigh` / `Critical`, `CPUUsageHigh`, `MemoryUsageHigh` |
+| Node | `NodeNotReady`, `NodeMemoryPressure`, `NodeDiskPressure`, `NodePIDPressure`, `NodeNetworkUnavailable` |
+| Control plane | `APIServerUnhealthy`, `ETCDUnhealthy`, `SchedulerUnhealthy`, `ControllerManagerUnhealthy`, `ComponentUnhealthy` |
+
+<Note>
+  **OOM detection needs no metrics-server.** `OOMKilled` is read straight from the container's current or last termination state in the pod status, so the most valuable signal works on a bare cluster. Metrics-server only adds the container-level usage and saturation signals.
+</Note>
+
+When a signal stops appearing, the incident auto-resolves after a 5-minute grace period.
+
+## Diagnose
+
+Diagnosis turns raw signals into a root cause. The deterministic rule-based provider is **always on** and always the floor. It produces a summary, a category, a suggested action, and a confidence score computed from the rule's base confidence, how many correlated signals were seen, how unambiguous those signals are (an `OOMKilled` is clearer than a `PodPending`), and how tightly they cluster in time.
+
+With an Anthropic key configured, an AI provider runs afterwards and enhances those results with cluster context. Its diagnoses are recorded with `provider: ai-enhanced` versus `rule-based`. When two diagnoses describe the same category, action, and resources, the higher-confidence one wins — which naturally prefers the AI result when it is available and silently keeps the rule result when it is not.
+
+Any LLM failure degrades to the rules. It never blocks the loop.
+
+## Propose
+
+With AI remediation planning enabled, the planner assembles the context it sends to Claude:
+
+- The affected **ApplicationPersona** — spec *and* status, including the learned resource baselines
+- The singleton **ClusterPersona** — platform, capacity, and the self-healing policy
+- Recent **IncidentMemory** records for the same application
+- The **RemediationActions those incidents referenced, with their phase and verification result** — so the model can see which past fixes actually worked and which were rolled back
+
+Claude returns an ordered plan. Each step carries an order, type, description, rationale, risk level, and an `autoExecutable` flag, and `persona-update` steps carry the JSON merge patch plus a `prePatchState` snapshot for rollback. The result lands on `RemediationAction.spec.steps[]` with `planSource: ai-anthropic`.
+
+<Note>
+  **Only `persona-update` steps may be auto-executable.** This is enforced at the Kubernetes API server by a CEL validation rule on the CRD, not merely in operator code. `workload-apply`, `restart`, `scale`, `config-change`, and `manual` steps are advisory — recorded for a human, the CLI, or your pipeline to act on. No plan can escalate itself.
+</Note>
+
+Without a key, or with `aiRemediation.enabled=false`, the deterministic proposer runs instead and emits `planSource: rule-based`. It handles the resource-adjustment path — the OOM and saturation cases.
+
+Read the resulting plan with [`dorgu remediation diff`](/cli/commands/remediation#remediation-diff).
+
+## Guardrails
+
+Every proposal passes the safety checker before it is created.
+
+| Guardrail | Limit |
+|-----------|-------|
+| Blast radius | Resource increases capped at **2×**; decreases capped at 50% |
+| Rate limit | **5 remediations per persona per hour** (override with `policies.selfHealing.maxRemediationsPerHour`) |
+| Concurrency | **One active remediation per persona** — a second is skipped while one is `Approved`, `Applying`, or `Verifying` |
+| Failure cooldown | 30 minutes after a `Failed` remediation for the same persona |
+| Namespace deny list | `kube-system` and `dorgu-operator-system` always; plus anything in `policies.selfHealing.excludeNamespaces` |
+| Approval | **Required by default.** Every proposal is created with `approval.required: true` and phase `Pending`. |
+| Deduplication | One remediation per incident, and one per persona-plus-target — so an OOM that also trips a crash-loop yields **two incidents but one fix** |
+| Rollback | Automatic. The operator restores `prePatchState` when verification finds the health degraded. |
+
+## Verify and remember
+
+Approval starts a timed verification, not an instant success.
+
+<Steps>
+  <Step title="Apply">
+    The operator patches the ApplicationPersona spec and moves to `Applying`, recording `appliedAt`.
+  </Step>
+  <Step title="Wait">
+    It waits out `spec.rollback.healthCheckAfter` — **10 minutes** by default — then moves to `Verifying`.
+  </Step>
+  <Step title="Verify">
+    It re-runs the whole detection engine and asks two questions: is the original signal still present for this persona, and are there new critical signals?
+  </Step>
+  <Step title="Settle">
+    Clean → `Completed`, and the incident is marked `Resolved` with the outcome and duration. Degraded → the `prePatchState` is restored and the action becomes `RolledBack`. `Unknown` → retried twice, one minute apart, then `Failed`.
+  </Step>
+</Steps>
+
+<Warning>
+  Your pod recovers within seconds of `approve`, but the remediation stays in `Applying` / `Verifying` for the full window and the incident stays open until then. That is the design, not a hang — the wait is what makes automatic rollback meaningful.
+</Warning>
+
+Either way the record persists. `IncidentMemory` keeps the signal, the root cause, the confidence, the occurrence count, and the resolution outcome; `RemediationAction` keeps the plan and the verification result. Both become context for the next proposal.
+
+## Trust model
+
+The `ClusterPersona` carries the self-healing policy:
+
+```yaml
+spec:
+  policies:
+    selfHealing:
+      enabled: true
+      mode: observe          # observe | propose | auto-approve
+      trustLevel: 2          # 0-5
+      maxRemediationsPerHour: 5
+      excludeNamespaces: []
+```
+
+<Warning>
+  **Today, `mode` and `trustLevel` are descriptive, not enforced.** They are recorded on the ClusterPersona and fed to the AI planner as context, and the operator auto-creates its default persona with `mode: observe`. But no code path gates proposal on the mode, and **auto-approve graduation is not implemented** — `spec.approval.autoApproveRule` exists in the CRD and controllers ignore it. Every remediation requires human approval, whatever the mode says. `maxRemediationsPerHour` and `excludeNamespaces` *are* enforced.
+</Warning>
+
+See the [trust model](/cli/architecture/trust-model) for how the levels are meant to progress.
+
+## Prerequisites
+
+| Component | Required? | What you lose without it |
+|-----------|-----------|--------------------------|
+| `healthCheck.enabled=true` | **Yes** | The whole loop. Detection is off by default. |
+| An ApplicationPersona per app | **Yes** | Signals have nothing to correlate to, so no incident is opened |
+| Resource **limits** on the persona | **Yes** for resource fixes | The proposer skips with `persona has no resource limits configured` |
+| metrics-server | No | Container-level CPU/memory usage and saturation signals. OOM and crash-loop detection still work. |
+| Prometheus | No | Learned resource baselines in `status.learned.resourceBaseline`, which the AI uses to size fixes |
+| Anthropic API key | No | AI diagnosis and AI ordered plans. Rule-based detection, diagnosis, and remediation all still work. |
+| WebSocket | No | Live `dorgu watch remediations` streaming |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="No incident is created, even though the pod is crash-looping">
+    Signals are correlated to a persona by name. The persona matches a resource when the resource name equals the persona name (or `spec.name`), or **starts with it followed by a hyphen** — which is how pod suffixes are handled. If your persona is `api` but the pods are `api-server-7d9f-x2k`, nothing matches. Name the persona so it prefix-matches the pods, and make sure it lives in the same namespace as the workload.
+  </Accordion>
+
+  <Accordion title="An incident exists, but no remediation is proposed">
+    The most common cause is a persona with no resource **limits**. The proposer needs a current value to compute a bounded change, so it skips with a logged `persona has no resource limits configured`. Add `spec.resources.limits` to the persona.
+
+    Other logged skip reasons worth checking: `safety check failed: [rate-limit ...]` (5 per persona per hour), `[concurrent ...]` (one active remediation at a time), `[deny-list ...]` (the namespace is excluded), `[blast-radius ...]` (the change exceeded 2×), and the dedup skip when an active remediation already covers the same target.
+  </Accordion>
+
+  <Accordion title="Two incidents for one problem">
+    Expected. A single OOM usually raises both `OOMKilled` and `CrashLoopBackOff`. Dedup runs at the remediation layer, not the incident layer, so you see two incidents and one fix. Approving that one fix resolves both.
+  </Accordion>
+
+  <Accordion title="The remediation is stuck in Applying or Verifying">
+    It is not stuck. The operator waits out the verification window — 10 minutes by default — before it will call the fix good. Check the pod itself: if it is `1/1 Running` with no new restarts, the heal worked and the phase will settle on its own.
+  </Accordion>
+
+  <Accordion title="Plans come back rule-based when AI is enabled">
+    The AI planner degrades to the deterministic rules on any failure and logs `AI remediation planning failed, falling back to rules` with the error. Check that the operator can reach the Anthropic API (egress and NAT), that the key is valid, and that the startup log includes `AI remediation planning enabled`. See [AI setup](/operator/configuration/ai-setup).
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Turn on AI" icon="sparkles" href="/operator/configuration/ai-setup">
+    BYO Anthropic key, injected from a Secret in your own cluster
+  </Card>
+  <Card title="dorgu remediation" icon="terminal" href="/cli/commands/remediation">
+    Review, approve, reject, and heal from the CLI
+  </Card>
+  <Card title="Operator quickstart" icon="rocket" href="/operator/quickstart">
+    Watch the loop run end to end on a real cluster
+  </Card>
+  <Card title="CRD reference" icon="file-code" href="/cli/architecture/crds">
+    IncidentMemory, RemediationAction, and DorguEvent schemas
+  </Card>
+</CardGroup>
