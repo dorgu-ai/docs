@@ -125,14 +125,24 @@ spec:
   policies:
     selfHealing:
       enabled: true
-      mode: observe          # observe | propose | auto-approve
+      mode: propose          # observe | propose (auto-approve is not implemented)
       trustLevel: 2          # 0-5
       maxRemediationsPerHour: 5
       excludeNamespaces: []
 ```
 
+**`mode` gates the loop:**
+
+| Mode | What happens |
+|------|--------------|
+| `observe` | Detect, diagnose, and record an `IncidentMemory`. **No `RemediationAction` is created** — the operator logs `selfHealing.mode=observe — proposal suppressed` and stops. The gate runs ahead of the AI planner, so observe costs no API calls. |
+| `propose` | **Default.** Also propose a `RemediationAction` for every actionable incident, which a human approves before anything is applied. |
+| `auto-approve` | **Not implemented.** Accepted for forward compatibility and treated exactly like `propose`, with a warning logged on every proposal. |
+
+The operator auto-creates its default `dorgu-cluster` persona with `mode: propose`. Set `mode: observe` to watch the loop diagnose without proposing anything.
+
 <Warning>
-  **Today, `mode` and `trustLevel` are descriptive, not enforced.** They are recorded on the ClusterPersona and fed to the AI planner as context, and the operator auto-creates its default persona with `mode: observe`. But no code path gates proposal on the mode, and **auto-approve graduation is not implemented** — `spec.approval.autoApproveRule` exists in the CRD and controllers ignore it. Every remediation requires human approval, whatever the mode says. `maxRemediationsPerHour` and `excludeNamespaces` *are* enforced.
+  **`trustLevel`, `enabled`, and `autoApproveRule` are descriptive, not enforced.** `trustLevel` is only fed to the AI planner as context; detection, diagnosis, and proposal run regardless of `enabled` (use `mode: observe` to stop at diagnosis); and `spec.approval.autoApproveRule` exists in the `RemediationAction` CRD but no controller reads it. **Every remediation requires human approval.** `maxRemediationsPerHour` and `excludeNamespaces` *are* enforced.
 </Warning>
 
 See the [trust model](/cli/architecture/trust-model) for how the levels are meant to progress.

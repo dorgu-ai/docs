@@ -56,7 +56,7 @@ The healing loop is what Level 2 looks like end to end:
 </Steps>
 
 <Note>
-  **Auto-approve graduation is not implemented.** The `ClusterPersona` carries `policies.selfHealing.mode` (`observe`, `propose`, `auto-approve`) and `trustLevel` (0–5), and `RemediationAction` carries `approval.autoApproveRule` — but controllers ignore all three when deciding whether approval is needed. Every remediation waits for a human, regardless of what the mode says. `maxRemediationsPerHour` and `excludeNamespaces` on that same policy *are* enforced.
+  **Auto-approve graduation is not implemented.** `policies.selfHealing.mode` on the `ClusterPersona` decides how far the loop goes on its own — `observe` proposes nothing, `propose` (the default) proposes and waits — but `auto-approve` is accepted only for forward compatibility: the operator logs a warning and treats it as `propose`. `trustLevel` (0–5) and `RemediationAction`'s `approval.autoApproveRule` are ignored entirely. **Every remediation waits for a human**, whatever the mode or trust level says. `maxRemediationsPerHour` and `excludeNamespaces` on that same policy *are* enforced.
 </Note>
 
 ## Non-Negotiable Invariant
