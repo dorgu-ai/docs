@@ -14,29 +14,59 @@ go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest
 Or pin a specific version:
 
 ```bash
-go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.8.0
+go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.8.1
 ```
 
 <Note>
-  `v0.8.0` is the version this page is pinned to. Check [CLI releases](https://github.com/dorgu-ai/dorgu/releases) for the newest, or use `@latest` to always get it.
+  `v0.8.1` is the version this page is pinned to. Check [CLI releases](https://github.com/dorgu-ai/dorgu/releases) for the newest, or use `@latest` to always get it.
 </Note>
 
 Ensure `$GOPATH/bin` (or `$HOME/go/bin`) is in your `PATH`.
 
-## Binary releases
+## Binary releases (no Go toolchain)
 
-Download pre-built binaries for Linux, macOS, and Windows from [GitHub Releases](https://github.com/dorgu-ai/dorgu/releases).
+Every release ships pre-built archives on [GitHub Releases](https://github.com/dorgu-ai/dorgu/releases).
 
 Available platforms:
 - Linux (amd64, arm64)
 - macOS / Darwin (amd64, arm64)
-- Windows (amd64)
+- Windows (amd64, arm64)
+
+Set `OS` to `linux` or `darwin` and `ARCH` to `amd64` or `arm64`:
 
 ```bash
-# Example: download and install on Linux amd64
-curl -Lo dorgu https://github.com/dorgu-ai/dorgu/releases/latest/download/dorgu_linux_amd64
+VERSION=0.8.1
+OS=linux
+ARCH=amd64
+ARCHIVE="dorgu_${VERSION}_${OS}_${ARCH}.tar.gz"
+
+curl -fLO "https://github.com/dorgu-ai/dorgu/releases/download/v${VERSION}/${ARCHIVE}"
+tar -xzf "$ARCHIVE" dorgu
 chmod +x dorgu
 sudo mv dorgu /usr/local/bin/
+```
+
+<Warning>
+  Keep the `-f` in `curl -fLO`. Without it, a wrong URL writes the 404 response body to disk, `curl` still exits 0, and you end up installing a text file named after the asset you wanted.
+</Warning>
+
+The archive also contains `README.md`, `LICENSE`, and `.dorgu.yaml.example`; naming `dorgu` in the `tar` command extracts only the binary.
+
+### Windows
+
+Download `dorgu_0.8.1_windows_amd64.zip` (or `_arm64`) from the releases page, extract it, and put `dorgu.exe` somewhere on your `PATH`.
+
+### Verifying the download
+
+Each release publishes `checksums.txt`:
+
+```bash
+curl -fLO "https://github.com/dorgu-ai/dorgu/releases/download/v${VERSION}/checksums.txt"
+
+# Linux
+sha256sum --ignore-missing -c checksums.txt
+# macOS
+shasum -a 256 --ignore-missing -c checksums.txt
 ```
 
 ## From source
@@ -54,12 +84,14 @@ make install  # installs to $GOPATH/bin
 dorgu version
 ```
 
-Expected output:
+From a release archive, the commit and build date are stamped in:
 
 ```
-dorgu version v0.8.0
-Build: d4d7983 @ 2026-07-09T01:15:55Z
+dorgu version v0.8.1
+Build: 7771a22 @ 2026-08-07T22:18:53Z
 ```
+
+`go install github.com/dorgu-ai/dorgu/cmd/dorgu@...` cannot set those build flags, so it prints `Build: from source` instead. That is a working install, not a broken one. Building from a clone with `make build` or `make install` does stamp the commit and date.
 
 ## Next steps
 

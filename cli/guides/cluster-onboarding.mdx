@@ -143,14 +143,15 @@ Components are installed in dependency order. For example, cert-manager is insta
 
     Common causes:
     - **Insufficient RBAC** — The operator service account needs cluster-wide permissions to watch CRDs. Re-run the Helm install to ensure RBAC resources are created.
-    - **CRD version mismatch** — If you upgraded the operator, delete and re-apply CRDs: `kubectl apply -f https://github.com/dorgu-ai/dorgu-operator/releases/latest/download/crds.yaml`
+    - **CRD version mismatch** — Helm only installs the CRDs on first install, never on upgrade. After upgrading the operator, re-apply them from the chart (see below).
   </Accordion>
 
   <Accordion title="ClusterPersona creation fails with 'resource not found'">
-    The CRDs may not be registered. Install them manually:
+    The CRDs may not be registered. They ship inside the Helm chart, so pull the chart and apply them manually:
 
     ```bash
-    kubectl apply -f https://github.com/dorgu-ai/dorgu-operator/releases/latest/download/crds.yaml
+    helm pull oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator --untar
+    kubectl apply -f dorgu-operator/crds/
     ```
 
     Then retry:
