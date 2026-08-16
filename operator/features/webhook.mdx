@@ -29,7 +29,20 @@ sequenceDiagram
     API->>User: Response (with warnings if any)
 ```
 
-The webhook looks up the matching ApplicationPersona by the deployment's `app.kubernetes.io/name` label. If no label is present or no matching persona exists, the deployment is allowed without validation.
+The webhook resolves the matching ApplicationPersona through the same ordered fallback chain the controller uses: the `app.kubernetes.io/name` label on the Deployment, then the `app` label, then `metadata.name`, then `spec.selector.matchLabels`. If no persona matches, the deployment is allowed without validation.
+
+<Warning>
+  **An unlabelled Deployment is no longer exempt.** Before operator 0.8.0 a Deployment without `app.kubernetes.io/name` on the object itself was skipped with "no app.kubernetes.io/name label; skipping persona validation". Helm, kustomize, and most hand-written YAML label the pod template only, so in practice a large share of real workloads were never validated at all.
+
+  **If you run `webhook.mode: enforcing`, workloads that previously passed unchecked may now be rejected.** Nothing about those workloads changed; what changed is that Dorgu can finally see them. Review the personas they will now be validated against, or run one cycle in advisory mode and read the warnings first:
+
+  ```bash
+  helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+    -n dorgu-system --reuse-values --set webhook.mode=advisory
+  ```
+
+  Clusters with the webhook disabled, which is the default, are unaffected.
+</Warning>
 
 ## Modes
 
@@ -116,8 +129,7 @@ The webhook is designed to fail open:
 
 - If the operator is down, Kubernetes skips the webhook (when configured with `failurePolicy: Ignore`)
 - If the ApplicationPersona lookup fails (API error), the deployment is allowed with a log message
-- If no `app.kubernetes.io/name` label is present, the deployment is allowed without validation
-- If no matching persona exists, the deployment is allowed
+- If no persona matches the deployment on any rung of the discovery chain, the deployment is allowed without validation
 
 This ensures the webhook never blocks deployments due to operator issues.
 

@@ -15,6 +15,27 @@ An **ApplicationPersona** is a Kubernetes Custom Resource that represents the id
 
 Think of it as a "living document" for your application. Once applied to a cluster, the Dorgu Operator continuously validates the persona against actual cluster state — flagging drift, misconfigurations, and degraded health.
 
+## Where to start
+
+The starting point decides the command.
+
+| You have | Use | Reads |
+|----------|-----|-------|
+| Local source with a `Dockerfile` or `docker-compose.yml` | `dorgu persona generate` / `dorgu persona apply` | Your working tree |
+| Deployments already running on the cluster | [`dorgu persona import`](/cli/commands/persona#persona-import) | The live Deployment spec |
+
+<Tip>
+  **On an existing cluster, start with import.** `generate` and `apply` need local source, which you do not have for the twenty services already running. Import reads the Deployments instead:
+
+  ```bash
+  dorgu health                                # which Deployments have no persona
+  dorgu persona import -n apps --all          # read the personas it would create
+  dorgu persona import -n apps --all --apply  # create them
+  ```
+
+  Requires CLI v0.9.0 or newer. Full walkthrough: [brownfield quickstart](/cli/quickstart#brownfield-a-cluster-that-already-has-apps).
+</Tip>
+
 ## Persona lifecycle
 
 <Steps>
@@ -26,6 +47,8 @@ Think of it as a "living document" for your application. Once applied to a clust
     ```
 
     This inspects the `Dockerfile`, dependency manifests, source code, and `.dorgu.yaml` config to produce a complete `ApplicationPersona` resource.
+
+    On a cluster that already runs the app, use [`dorgu persona import`](/cli/commands/persona#persona-import) instead: it needs no local source and no Dockerfile.
   </Step>
 
   <Step title="Apply">

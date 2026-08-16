@@ -7,7 +7,117 @@ description: Manage ApplicationPersona CRDs — generate, apply, and monitor per
 
 The `dorgu persona` command group manages **ApplicationPersona** custom resources. An ApplicationPersona is a Kubernetes CRD that captures the operational identity of your application — its resource requirements, scaling behavior, health characteristics, and deployment preferences — as a declarative, version-controlled resource.
 
-The workflow is: **generate** a persona YAML from your application source, **apply** it to the cluster, and **check status** to verify the operator has reconciled it.
+There are two ways in, depending on where the app is.
+
+| Starting point | Command | What it reads |
+|----------------|---------|---------------|
+| Local source with a `Dockerfile` or `docker-compose.yml` | [`persona generate`](#persona-generate) / [`persona apply`](#persona-apply) | Your working tree |
+| A Deployment already running on the cluster | [`persona import`](#persona-import) | The live Deployment spec |
+
+For a greenfield app the workflow is: **generate** a persona YAML from your application source, **apply** it to the cluster, and **check status** to verify the operator has reconciled it. For a cluster that already has apps, **import** does it in one step from what is already running.
+
+## persona import
+
+<Note>
+  Requires CLI **v0.9.0** or newer.
+</Note>
+
+### Synopsis
+
+```bash
+dorgu persona import -n <namespace> [--all | --name <deployment>] [flags]
+```
+
+Read the live Deployments in a namespace and synthesize an `ApplicationPersona` for each from what is already in the spec: resources, probes, replicas, ports, image, and ownership labels.
+
+This is the onboarding path for a cluster that already has apps. Unlike `persona generate`, it needs no local source, no Dockerfile, and no relabelling of your workloads. Dorgu only watches workloads that have a persona, so until one exists a broken app raises no incident and gets no proposed fix.
+
+It prints the YAML by default so you can read it before anything reaches the cluster. `--apply` creates the personas; `-o` writes them to a file.
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-n`, `--namespace` | string | **required** | Namespace to import from |
+| `--all` | bool | `false` | Import every Deployment in the namespace |
+| `--name` | string | — | Import a single Deployment by name |
+| `--dry-run` | bool | `true` (implied) | Print the personas without applying. This is the default; the flag is there to be explicit. |
+| `-o`, `--output` | string | — | Write the personas to a file instead of stdout |
+| `--apply` | bool | `false` | Apply the personas to the cluster |
+| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
+
+Exactly one of `--all` or `--name` is required, and they are mutually exclusive. `--apply` and `--dry-run` are mutually exclusive.
+
+### Examples
+
+```bash
+# Read the personas for every Deployment in a namespace
+dorgu persona import -n apps --all
+
+# Save them to a file to review, edit, and commit
+dorgu persona import -n apps --all > personas.yaml
+dorgu persona import -n apps --all -o personas.yaml
+
+# One Deployment only
+dorgu persona import -n apps --name checkout-api
+
+# Create them on the cluster
+dorgu persona import -n apps --all --apply
+```
+
+<Note>
+  **`> personas.yaml` is safe.** Only the rendered YAML goes to stdout; every diagnostic, warning, and summary line goes to **stderr**. Redirecting stdout gives you a clean multi-document manifest you can commit to Git, and you still see the warnings on your terminal.
+</Note>
+
+### What gets inferred, and why it matters
+
+Import reads the Deployment and invents as little as possible. Anything it does invent, it says out loud on stderr.
+
+<Warning>
+  **The warning to read is the one about resource limits.** The remediation proposer skips any persona with no `resources.limits`, because without a current value it has nothing to compute a bounded change from. A persona that cannot heal is worse than no persona, so where a container declares no limits, import derives them:
+
+  - Limits are derived from the container's requests at **2x** where requests exist.
+  - Where there is neither a request nor a limit, Dorgu's own defaults are used (`500m` CPU, `512Mi` memory).
+
+  Either way you get a line naming the container and the number:
+
+  ```
+  ⚠ container "report-worker" sets no memory limit; the persona uses 96Mi (2x its memory request of 48Mi)
+  ⚠ Resource limits were inferred for: report-worker. Remediation resizes from the persona, so check these before you rely on them.
+  ```
+
+  Remediation resizes from the persona, not from the workload, so review these before you rely on them.
+</Warning>
+
+Other things import reports rather than guesses at silently:
+
+| Situation | What you see |
+|-----------|--------------|
+| No HTTP liveness or readiness probe | The `health` block is left out of the persona, and the Deployment is named. Exec and TCP probes have no path to record. |
+| Another Deployment's label outranks this one's name | The conflict is named, with the label to set so the persona resolves to the workload you meant. |
+| No Deployments in the namespace | Nothing is written, and it says so rather than emitting an empty file. |
+| `ApplicationPersona` CRD not installed | Reported as a fact about the operator, with `dorgu cluster setup` as the hint. |
+
+### How the persona is named
+
+`metadata.name` is the Deployment's name. `spec.name` is chosen so the operator's [discovery chain](/operator/features/self-healing#how-a-persona-finds-its-deployment) resolves it back to that same Deployment and no other: candidates are tried in chain order (`app.kubernetes.io/name` label, `app` label, then the Deployment name) and each is kept only if it resolves uniquely across the whole namespace.
+
+Where no candidate works, because another Deployment carries a label that outranks this one's name match, the CLI says so rather than pointing Dorgu at the wrong workload:
+
+```
+⚠ the persona for Deployment web will resolve to web-green instead: web-green carries a label
+  that outranks the name match. Set app.kubernetes.io/name=web on web before importing
+```
+
+### After importing
+
+```bash
+dorgu persona list -n apps
+```
+
+Phase `Active` means the operator resolved the persona to its Deployment. Phase `Pending` means it did not: check the `Ready` condition for `NoDeployment` or `AmbiguousDeployment` and see [troubleshooting](/operator/features/self-healing#troubleshooting).
+
+The full walkthrough, from install through breaking an imported app and healing it, is the [brownfield quickstart](/cli/quickstart#brownfield-a-cluster-that-already-has-apps).
 
 ## persona generate
 
@@ -84,6 +194,56 @@ dorgu persona apply . --llm-provider anthropic
 # Apply with a custom name
 dorgu persona apply . --name payment-api -n commerce
 ```
+
+## persona list
+
+### Synopsis
+
+```bash
+dorgu persona list [flags]
+```
+
+List the `ApplicationPersona` resources on the cluster with their phase, health, and age. Defaults to every namespace.
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-n`, `--namespace` | string | all namespaces | Namespace to list |
+| `--json` | bool | `false` | Output the raw resource list as JSON (inherited global flag) |
+
+### Example output
+
+```
+  NAME                           NAMESPACE        PHASE          HEALTH       AGE
+  ────────────────────────────────────────────────────────────────────────────────
+  api                            apps             Active         Healthy      4m
+  report-worker                  apps             Active         Degraded     4m
+  web                            apps             Pending        Unknown      4m
+```
+
+| Column | Description |
+|--------|-------------|
+| NAME | The persona's `metadata.name` |
+| NAMESPACE | Namespace of the persona |
+| PHASE | `Pending`, `Active`, `Degraded`, or `Unknown`. `Pending` on a persona whose Deployment exists usually means resolution failed. |
+| HEALTH | `.status.health.status`, or `-` when the operator has not reported one yet |
+| AGE | Time since the persona was created |
+
+### Examples
+
+```bash
+# Every persona on the cluster
+dorgu persona list
+
+# One namespace
+dorgu persona list -n commerce
+
+# JSON for scripting
+dorgu persona list --json
+```
+
+With no personas, the command says so and points at `dorgu persona generate`. Use [`dorgu persona import`](#persona-import) instead when the apps are already running. If the CRD is missing entirely, it reports that the operator is not installed rather than reporting an empty list.
 
 ## persona status
 

@@ -16,8 +16,9 @@ dorgu
 │   ├── path                Show config file path
 │   └── reset               Reset to defaults
 ├── persona                 Manage ApplicationPersona CRDs
-│   ├── generate [path]     Generate persona YAML
-│   ├── apply [path]        Apply persona to cluster
+│   ├── generate [path]     Generate persona YAML from local source
+│   ├── apply [path]        Apply persona to cluster from local source
+│   ├── import              Create personas from Deployments already running
 │   ├── status <name>       Check persona status
 │   └── list                List personas across namespaces
 ├── cluster                 Manage ClusterPersona CRDs
@@ -62,7 +63,7 @@ The command tree above is a plain listing. Use these links for the full flag ref
 | `dorgu generate` | [generate](/cli/commands/generate) | Analyze an app and generate Kubernetes manifests |
 | `dorgu init` | [init](/cli/commands/init) | Initialize app, workspace, or global configuration |
 | `dorgu config` | [config](/cli/commands/config) | Read and write configuration values |
-| `dorgu persona` | [persona](/cli/commands/persona) | Generate, apply, and inspect ApplicationPersona CRDs |
+| `dorgu persona` | [persona](/cli/commands/persona) | Generate, import, apply, and inspect ApplicationPersona CRDs |
 | `dorgu cluster` | [cluster](/cli/commands/cluster) · [cluster setup](/cli/commands/cluster-setup) | Manage the ClusterPersona and bootstrap a cluster stack |
 | `dorgu watch` | [watch](/cli/commands/watch) | Stream personas, cluster, events, incidents, and remediations |
 | `dorgu sync` | [sync](/cli/commands/sync) | Query operator state |
@@ -86,12 +87,22 @@ These flags apply to all commands:
 
 Commands that accept a `[path]` argument default to the current directory (`.`) when omitted. The path should point to a directory containing a `Dockerfile` or `docker-compose.yml`.
 
+## Prerequisites
+
+Every command that touches a cluster shells out to **`kubectl`**, so it must be on your `PATH` and your current context must point at the target cluster. Without it those commands fail with `kubectl not found in PATH`. Only `generate`, `init`, and `config` work with no cluster at all.
+
+Set `DORGU_DEBUG=1` to see `kubectl`'s raw output in error messages. By default the CLI strips klog noise (the `memcache.go:265 "Unhandled Error"` lines) so the message that says what went wrong is not buried.
+
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
-| `1` | Error (see error message for details) |
+| `1` | Error: the command could not run. An unreachable cluster, a missing kubeconfig, no `kubectl`, a failed API call. |
+| `2` | `dorgu health --exit-code` only: active critical incidents |
+| `3` | `dorgu health --exit-code` only: health could not be judged |
+
+Codes 2 and 3 are opt-in and specific to [`dorgu health`](/cli/commands/health#exit-codes). An unknown subcommand is an error with a non-zero exit, not a help dump.
 
 ## Getting help
 
@@ -102,4 +113,5 @@ dorgu --help
 # Command-specific help
 dorgu generate --help
 dorgu cluster setup --help
+dorgu persona import --help
 ```

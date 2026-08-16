@@ -1,0 +1,10 @@
+```bash
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  --namespace dorgu-system \
+  --create-namespace \
+  --set healthCheck.interval=30s \
+  --set llm.provider=claude \
+  --set llm.existingSecret=dorgu-llm \
+  --set llm.existingSecretKey=ANTHROPIC_API_KEY \
+  --set aiRemediation.enabled=true
+```

@@ -31,7 +31,7 @@ flowchart TD
     Update --> Requeue["Requeue after 60s"]
 ```
 
-The controller matches deployments to personas using the `app.kubernetes.io/name` label. The label value must match the persona's `spec.name` field.
+The controller resolves a persona to its Deployment by walking an ordered fallback chain against `spec.name`: the `app.kubernetes.io/name` label on the Deployment, then the `app` label, then `metadata.name`, then `spec.selector.matchLabels`. **No label on the Deployment object is required**, so workloads labelled only on the pod template (Helm, kustomize, most hand-written YAML) are validated too. A persona that resolves to nothing reports `NoDeployment`, and one that matches several Deployments on the same rung reports `AmbiguousDeployment` rather than validating an arbitrary one. See [discovery](/operator/features/self-healing#how-a-persona-finds-its-deployment).
 
 ## Validation checks
 

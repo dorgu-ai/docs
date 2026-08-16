@@ -1,0 +1,15 @@
+<CodeGroup>
+
+```bash Binary (no Go)
+# Set OS to linux or darwin, ARCH to amd64 or arm64
+OS=linux ARCH=amd64
+curl -fLO "https://github.com/dorgu-ai/dorgu/releases/latest/download/dorgu_${OS}_${ARCH}.tar.gz"
+tar -xzf "dorgu_${OS}_${ARCH}.tar.gz" dorgu
+sudo mv dorgu /usr/local/bin/
+```
+
+```bash go install
+go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest
+```
+
+</CodeGroup>

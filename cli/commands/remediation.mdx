@@ -19,6 +19,7 @@ Approving does two things: it records your decision on the `RemediationAction`, 
 flowchart LR
     P["Pending"] -->|"approve"| A["Approved"]
     P -->|"reject"| RJ["Rejected"]
+    A -->|"nothing to apply"| AK["Acknowledged"]
     A -->|"operator patches persona"| AP["Applying"]
     AP -->|"verification window"| V["Verifying"]
     V -->|"signal cleared"| C["Completed"]
@@ -30,6 +31,7 @@ flowchart LR
 |-------|---------------|
 | `Pending` | Waiting for your decision. The operator takes no action. |
 | `Approved` | You approved it. The operator applies the patch to the ApplicationPersona. |
+| `Acknowledged` | You approved a plan that had nothing to apply. The approval is recorded, the operator changed nothing, and the incident is marked `acknowledged` rather than resolved, because nothing was fixed. |
 | `Applying` | The patch landed. The operator is waiting out the verification window. |
 | `Verifying` | The operator is re-running detection to check whether the original signal cleared. |
 | `Completed` | Verification passed — the signal is gone and no new critical signals appeared. |
@@ -37,6 +39,8 @@ flowchart LR
 | `Failed` | The apply failed, the rollback failed, or verification returned `Unknown` after 2 retries. |
 | `Rejected` | You rejected it. |
 | `Expired` | The approval deadline passed. |
+
+Two condition reasons are worth knowing, both on the `Applied` condition. `AdvisoryOnly` accompanies `Acknowledged`. `PreconditionRejected` marks a plan the executor refused before touching the cluster, and is deliberately excluded from the 30-minute failure cooldown, since nothing in the cluster actually went wrong.
 
 <Warning>
   `Completed` only arrives **after the verification window** — 10 minutes by default (`spec.rollback.healthCheckAfter`). Your pod recovers within seconds of `approve`, but the remediation sits in `Applying` and then `Verifying` for the rest of that window. This is not stuck. It is the operator waiting long enough to be able to tell a real fix from a temporary one, so it can auto-roll-back if the health regresses.
@@ -135,7 +139,6 @@ Remediation: fix-oom-api-server
 ═══════════════════════════════
 
 Target:     ApplicationPersona/api-server (production)
-Severity:
 Type:       persona-update
 Confidence: 0.85
 Plan:       ai-anthropic
@@ -143,7 +146,7 @@ Phase:      Pending
 Incident:   im-oom
 
 Explanation:
-  OOM remediation for api-server
+  AI remediation plan: 3 steps, 1 applied on approval and 2 advisory
 
 Plan summary:
   Container OOMKilled due to a low memory limit.
@@ -163,6 +166,7 @@ Plan (3 steps):
 
   [2] restart (low; advisory): Restart the deployment to pick up new limits
       New limits only apply to new pods
+      Run: kubectl rollout restart deployment/api-server -n production
 
   [3] manual (medium; advisory): Verify no further OOM events for 30m
 
@@ -175,7 +179,47 @@ Actions:
   dorgu remediation reject fix-oom-api-server -n production --reason "..."
 ```
 
-Each step line reads `[order] type (risk; mode): description`, with the AI's rationale indented underneath and a unified diff of `prePatchState → patch` where the step carries one.
+Each step line reads `[order] type (risk; mode): description`, with the rationale indented underneath, an optional `Run:` command, and a unified diff of `prePatchState → patch` where the step carries one.
+
+<Note>
+  **There is no `Severity:` row.** `RemediationAction` carries no severity field. Read severity from the linked incident with [`dorgu incidents describe`](/cli/commands/incidents).
+
+  `Explanation:` and `Plan summary:` say different things: the summary is the root cause (why it broke), the explanation is the shape of the response (what the plan will and will not do for you). They used to render the same paragraph twice; where an older operator wrote both fields identically, the CLI now prints it once.
+</Note>
+
+### Ready-to-run commands on advisory steps
+
+An advisory step is one Dorgu will not carry out for you. Where a single command does the job, the step carries it and `diff` prints it under the rationale:
+
+```
+  [2] workload-apply (low; advisory): Correct the mistyped image tag
+      nginx:1.27-alpineX does not exist; the published tag is nginx:1.27-alpine
+      Run: kubectl set image deployment/web web=nginx:1.27-alpine -n demo
+```
+
+This is the difference between a correct diagnosis and an actual fix. Before this existed, Dorgu would identify a mistyped image tag at 0.91 confidence, name the correct tag, link Docker Hub, and then leave you to write the `kubectl set image` yourself.
+
+<Warning>
+  **The command is only ever printed. Nothing executes it**, not the operator and not the CLI. Read it before you run it.
+
+  Because the field can be written by an AI planner, the operator sanitizes it before storing it and the CLI re-checks it before displaying it: it must be a single line, start with `kubectl `, contain none of `; & | < > ` $`, and stay under 1024 characters. A command that fails any of those checks is not shown at all rather than shown with a warning.
+</Warning>
+
+Requires operator **v0.8.0** and CLI **v0.9.0** or newer. Older objects simply carry no command, and no `Run:` line is printed.
+
+### Advisory plans
+
+Some plans have nothing the CLI can apply, typically a `notification` action or a plan whose every step is advisory. Those say so plainly and offer only `reject`:
+
+```
+This plan is advisory: nothing in it can be applied for you.
+Carry out the steps above yourself. Nothing changes in the cluster until you do.
+
+Actions:
+  dorgu remediation reject fix-image-web -n demo --reason "..."
+```
+
+Approving one anyway is safe: it records the approval, changes nothing, and settles the action as `Acknowledged`. It used to be offered `approve` as its suggested next action, and following that advice failed the remediation and put the app into a 30-minute cooldown.
 
 | Part | Values | Meaning |
 |------|--------|---------|
@@ -226,7 +270,7 @@ Advisory steps (`restart`, `scale`, `config-change`, `manual`, and any `persona-
 | `--reason` | string | `""` | Optional approval reason, echoed in the success message |
 | `--heal` | bool | `true` | After approval, apply the resource change to the workload |
 | `--no-heal` | bool | `false` | Skip the workload heal; only patch the RemediationAction status |
-| `--workload` | string | auto-discovered | Explicit Deployment name, overriding label discovery |
+| `--workload` | string | auto-discovered | Explicit Deployment name, overriding the discovery chain |
 | `--container` | string | auto-selected | Explicit container name to patch |
 | `--yes` | bool | `false` | Skip the heal confirmation prompt |
 | `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
@@ -250,9 +294,15 @@ dorgu remediation approve fix-oom-api-server -n production --yes
 # Record the approval but apply the workload change yourself (GitOps)
 dorgu remediation approve fix-oom-api-server -n production --no-heal
 
-# Disambiguate when label discovery finds several Deployments or containers
+# Disambiguate when discovery finds several Deployments or containers
 dorgu remediation approve fix-oom-api-server -n production --workload api --container app
 ```
+
+<Note>
+  The target Deployment is resolved **before** the approval is recorded. If the workload cannot be found, nothing is approved and nothing is changed, and the error lists the Deployments that are present. Approving first and failing to resolve afterwards used to leave the persona at the new limits, the workload at the old ones, and a 10-minute verification window running over a change that never landed.
+</Note>
+
+If a heal does fail after approval, the CLI names the divergence rather than reporting success: `the remediation is Approved but <ns>/<deployment> was NOT patched; the persona and the workload now disagree`. `--no-heal` warns about the same divergence up front.
 
 Only `Pending` remediations can be approved. Anything else exits with an error naming the current phase.
 
@@ -299,7 +349,7 @@ Applies an approved remediation's resource change to the workload on its own. `a
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-n, --namespace` | string | **required** | Namespace of the remediation |
-| `--workload` | string | auto-discovered | Explicit Deployment name, overriding label discovery |
+| `--workload` | string | auto-discovered | Explicit Deployment name, overriding the discovery chain |
 | `--container` | string | auto-selected | Explicit container name to patch |
 | `--yes` | bool | `false` | Skip the confirmation prompt |
 | `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
@@ -311,7 +361,9 @@ Applies an approved remediation's resource change to the workload on its own. `a
     The persona's namespace (`spec.personaRef.namespace`), falling back to the remediation's own namespace. Never anywhere else.
   </Step>
   <Step title="Deployment">
-    Deployments labelled `app.kubernetes.io/name=<persona.spec.name>`, falling back to `app=<persona.spec.name>`. Zero or more than one match is an error that asks for `--workload`.
+    Every Deployment in that namespace is a candidate, and the CLI walks the same ordered chain the operator uses, taking the first rung that matches exactly one Deployment: the `app.kubernetes.io/name` label, then the `app` label, then `metadata.name`, then `spec.selector.matchLabels`. All against the persona's `spec.name`.
+
+    **No label is required on the Deployment object.** Helm, kustomize, and most hand-written YAML label the pod template only; that resolves on the last rung. Zero matches and an ambiguous rung are both errors, and both list the Deployments actually present in the namespace and point at `--workload`. See [discovery](/operator/features/self-healing#how-a-persona-finds-its-deployment).
   </Step>
   <Step title="Container">
     The only container if there is one, otherwise the container whose name matches the app. Anything else asks for `--container`.

@@ -3,6 +3,8 @@ title: "Installation"
 description: "Install the Dorgu Operator via Helm, kustomize, or source build"
 ---
 
+import OperatorInstall from '/snippets/operator-install-helm.mdx';
+
 ## Prerequisites
 
 - Kubernetes cluster 1.24+
@@ -13,16 +15,45 @@ description: "Install the Dorgu Operator via Helm, kustomize, or source build"
 
 Install the operator from the OCI registry:
 
+<OperatorInstall />
+
+That is the canonical install command, and it is the same one used in the [CLI quickstart](/cli/quickstart), the [operator quickstart](/operator/quickstart), and [AI setup](/operator/configuration/ai-setup).
+
+<Note>
+  **Failure detection is on out of the box** as of chart **0.8.0**. The health-check reconciler runs every 60 seconds, opens `IncidentMemory` records, and proposes `RemediationAction` fixes for what it finds. Nothing is ever applied without your approval.
+
+  Earlier charts defaulted `healthCheck.enabled` to `false`, which meant following this page produced an operator that detected nothing. If you are reading an older copy of these instructions, that is the difference.
+</Note>
+
+To turn detection off and run the operator for validation and cluster discovery only:
+
 ```bash
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  --version 0.7.2 \
   --namespace dorgu-system \
-  --create-namespace
+  --create-namespace \
+  --set healthCheck.enabled=false
+```
+
+<Warning>
+  **AI stays opt-in.** Detection and rule-based diagnosis are local and free, so they are on. AI diagnosis and AI-written remediation plans cost money and send incident context to Anthropic, so they require `llm.provider`, a key, and `aiRemediation.enabled` set explicitly. A default install spends nothing on inference. See [AI setup](/operator/configuration/ai-setup).
+</Warning>
+
+### Pin a chart version
+
+The command above resolves the newest published chart. To pin an exact version for reproducibility, add `--version`:
+
+```bash
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  --namespace dorgu-system \
+  --create-namespace \
+  --version 0.8.0
 ```
 
 <Note>
-  This page pins an exact chart version for reproducibility. Check [operator releases](https://github.com/dorgu-ai/dorgu-operator/releases) for the newest chart, or omit `--version` to always install the latest.
+  `0.8.0` is the chart version this page is pinned to. Check [operator releases](https://github.com/dorgu-ai/dorgu-operator/releases) for the newest.
 </Note>
+
+### Install with a values file
 
 To customize the installation, create a `values.yaml` file:
 
@@ -46,7 +77,6 @@ Then install with your values:
 
 ```bash
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  --version 0.7.2 \
   --namespace dorgu-system \
   --create-namespace \
   -f values.yaml
@@ -67,7 +97,7 @@ cd dorgu-operator
 make install
 
 # Deploy the operator
-make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.7.2
+make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.8.0
 ```
 
 To uninstall:
@@ -97,6 +127,8 @@ make build
 Running locally connects to whatever cluster your `kubeconfig` points to. Make sure you are targeting the correct cluster before starting the operator.
 </Warning>
 
+Running the manager directly does not read the chart's defaults. Add `--enable-health-check` to get the detection loop that a Helm install gives you.
+
 ## Build and push Docker image
 
 ```bash
@@ -112,6 +144,8 @@ make docker-buildx IMG=your-registry/dorgu-operator:latest PLATFORMS=linux/arm64
 
 ## Verify installation
 
+The chart prints a post-install summary that reports whether detection is on, whether AI is on, and what to run next. Re-read it at any time with `helm get notes dorgu-operator -n dorgu-system`.
+
 Check that the operator is running:
 
 ```bash
@@ -125,22 +159,53 @@ NAME                              READY   STATUS    RESTARTS   AGE
 dorgu-operator-6d4b5c7f9-x2k4p   1/1     Running   0          30s
 ```
 
-Verify the CRDs are installed:
+Verify all **five** CRDs are installed:
 
 ```bash
-kubectl get crd | grep dorgu
+kubectl get crd | grep dorgu.io
 ```
 
 Expected output:
 
 ```
-applicationpersonas.dorgu.io   2026-03-23T00:00:00Z
-clusterpersonas.dorgu.io       2026-03-23T00:00:00Z
+applicationpersonas.dorgu.io   2026-08-16T00:00:00Z
+clusterpersonas.dorgu.io       2026-08-16T00:00:00Z
+dorguevents.dorgu.io           2026-08-16T00:00:00Z
+incidentmemories.dorgu.io      2026-08-16T00:00:00Z
+remediationactions.dorgu.io    2026-08-16T00:00:00Z
 ```
+
+| CRD | Scope | What it holds |
+|-----|-------|---------------|
+| `applicationpersonas.dorgu.io` | Namespaced | The operational identity of one app: resources, scaling, health, security, ownership |
+| `clusterpersonas.dorgu.io` | Cluster | The cluster's identity and the self-healing policy. Singleton, auto-created as `dorgu-cluster` |
+| `incidentmemories.dorgu.io` | Namespaced | A detected incident with its root-cause diagnosis, confidence, and outcome |
+| `remediationactions.dorgu.io` | Namespaced | A proposed fix as an ordered plan, with its approval state and rollback snapshot |
+| `dorguevents.dorgu.io` | Namespaced | Classified and correlated Kubernetes events from the event pipeline |
+
+<Warning>
+  Fewer than five means an incomplete install. Detection cannot record anything without `incidentmemories` and cannot propose anything without `remediationactions`. Installing from a clone of an old chart was the usual cause; the published OCI chart has always carried all five. See [Self-healing](/operator/features/self-healing).
+</Warning>
+
+Confirm detection actually started:
+
+```bash
+kubectl -n dorgu-system logs deploy/dorgu-operator | grep "health check"
+```
+
+Look for `Phase 2a/2b health check and remediation enabled` with the interval. If it is absent, detection is off.
+
+## Next steps
 
 <CardGroup cols={2}>
   <Card title="Quickstart" icon="rocket" href="/operator/quickstart">
     Apply your first persona and see the operator in action
+  </Card>
+  <Card title="Already have apps running?" icon="download" href="/operator/quickstart#brownfield-a-cluster-that-already-has-apps">
+    Import personas from your live Deployments
+  </Card>
+  <Card title="Turn on AI" icon="sparkles" href="/operator/configuration/ai-setup">
+    BYO Anthropic key for AI diagnosis and ordered plans
   </Card>
   <Card title="Configuration" icon="gear" href="/operator/configuration/overview">
     Customize flags and Helm values

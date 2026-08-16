@@ -3,6 +3,9 @@ title: "Cluster Onboarding"
 description: "Bootstrap a production-ready Kubernetes stack with Dorgu"
 ---
 
+import CliInstall from '/snippets/cli-install.mdx';
+import OperatorInstall from '/snippets/operator-install-helm.mdx';
+
 ## Prerequisites
 
 Before onboarding a cluster, ensure you have:
@@ -29,29 +32,23 @@ Choose a cluster environment based on your use case:
 
 <Steps>
   <Step title="Install the CLI">
-    Install Dorgu via `go install`:
-
-    ```bash
-    go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest
-    ```
+    <CliInstall />
 
     Verify the installation:
 
     ```bash
     dorgu version
     ```
+
+    See [installation](/cli/installation) for pinned versions, checksums, and Windows.
   </Step>
 
   <Step title="Install the Dorgu Operator">
-    The operator manages ClusterPersona and ApplicationPersona CRDs on your cluster. Install it via Helm:
+    The operator manages ClusterPersona and ApplicationPersona CRDs on your cluster. The chart is published to an OCI registry, so there is no Helm repo to add:
 
-    ```bash
-    helm repo add dorgu https://dorgu-ai.github.io/dorgu-operator
-    helm repo update
-    helm install dorgu-operator dorgu/dorgu-operator \
-      --namespace dorgu-system \
-      --create-namespace
-    ```
+    <OperatorInstall />
+
+    Failure detection is on out of the box. See the [installation guide](/operator/installation) for version pinning and how to turn detection off.
   </Step>
 
   <Step title="Create a ClusterPersona">
@@ -105,12 +102,17 @@ kubectl get pods -n dorgu-system
 kubectl get crds | grep dorgu.io
 ```
 
-You should see two CRDs:
+You should see all five CRDs:
 
 ```
 applicationpersonas.dorgu.io
 clusterpersonas.dorgu.io
+dorguevents.dorgu.io
+incidentmemories.dorgu.io
+remediationactions.dorgu.io
 ```
+
+Fewer than five means an incomplete install. See [Verify installation](/operator/installation#verify-installation).
 
 ## Blessed Stack
 

@@ -53,7 +53,7 @@ websocket:
     port: 9090
 
 healthCheck:
-  enabled: false
+  enabled: true
   interval: 60s
 
 metricsServer:
@@ -125,11 +125,22 @@ The webhook requires TLS certificates. In production, use cert-manager to provis
 
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
-| `healthCheck.enabled` | bool | `false` | Enable the health-check reconciler — detection, diagnosis, and remediation proposals. **This is the switch that turns self-healing on.** |
+| `healthCheck.enabled` | bool | `true` | Enable the health-check reconciler: detection, diagnosis, and remediation proposals. **On by default since chart 0.8.0.** Set it to `false` to run without self-healing. |
 | `healthCheck.interval` | duration | `60s` | How often the reconciler runs a detection cycle |
 | `metricsServer.enabled` | bool | `true` | Enable metrics-server integration for container-level CPU/memory detection |
 
-When `healthCheck.enabled` is `false`, the operator still validates personas and discovers the cluster — it just never opens incidents or proposes fixes. Setting `metricsServer.enabled=false` passes `--enable-metrics-server=false`; OOM and crash-loop detection read pod status and are unaffected, but usage and saturation signals go dark. See [Self-healing](/operator/features/self-healing).
+Rendered as `--enable-health-check=<value>` on the operator container either way, so the setting is always visible in the pod spec:
+
+```bash
+kubectl -n dorgu-system get deploy dorgu-operator \
+  -o jsonpath='{.spec.template.spec.containers[0].args}{"\n"}'
+```
+
+When `healthCheck.enabled` is `false`, the operator still validates personas and discovers the cluster; it just never opens incidents or proposes fixes. Setting `metricsServer.enabled=false` passes `--enable-metrics-server=false`; OOM and crash-loop detection read pod status and are unaffected, but usage and saturation signals go dark. See [Self-healing](/operator/features/self-healing).
+
+<Warning>
+  **Upgrading from a chart older than 0.8.0 turns detection on.** A release that never set `healthCheck.enabled` will start detecting after the upgrade: expect `IncidentMemory` records to appear, and `RemediationAction` proposals wherever the ClusterPersona self-healing mode is `propose` (the default). Nothing is applied without approval. To keep the old behaviour, upgrade with `--set healthCheck.enabled=false`.
+</Warning>
 
 ### AI
 
@@ -219,12 +230,9 @@ When enabled, the chart creates a Service on the specified port.
 Create the Secret out of band, then:
 
 ```yaml
+# healthCheck.enabled and metricsServer.enabled are already true by default.
 healthCheck:
-  enabled: true
   interval: 30s
-
-metricsServer:
-  enabled: true
 
 websocket:
   enabled: true

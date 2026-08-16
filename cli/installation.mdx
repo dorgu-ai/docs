@@ -3,39 +3,39 @@ title: Installation
 description: Install the Dorgu CLI
 ---
 
-## Go install (recommended)
+import Prerequisites from '/snippets/prerequisites.mdx';
+import GoInstall from '/snippets/installation-go.mdx';
 
-Install the latest release using `go install`:
+## Prerequisites
 
-```bash
-go install github.com/dorgu-ai/dorgu/cmd/dorgu@latest
-```
+<Prerequisites />
 
-Or pin a specific version:
-
-```bash
-go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.8.1
-```
-
-<Note>
-  `v0.8.1` is the version this page is pinned to. Check [CLI releases](https://github.com/dorgu-ai/dorgu/releases) for the newest, or use `@latest` to always get it.
-</Note>
-
-Ensure `$GOPATH/bin` (or `$HOME/go/bin`) is in your `PATH`.
+<Warning>
+  **`kubectl` is not optional.** `dorgu health`, `dorgu incidents`, `dorgu remediation`, and `dorgu persona import` all shell out to `kubectl` and read your current context. Without it every cluster command fails with `kubectl not found in PATH`. Only `dorgu generate`, `dorgu init`, and `dorgu config` work without a cluster.
+</Warning>
 
 ## Binary releases (no Go toolchain)
 
-Every release ships pre-built archives on [GitHub Releases](https://github.com/dorgu-ai/dorgu/releases).
-
-Available platforms:
-- Linux (amd64, arm64)
-- macOS / Darwin (amd64, arm64)
-- Windows (amd64, arm64)
+Every release ships pre-built archives on [GitHub Releases](https://github.com/dorgu-ai/dorgu/releases), for Linux, macOS, and Windows on both `amd64` and `arm64`.
 
 Set `OS` to `linux` or `darwin` and `ARCH` to `amd64` or `arm64`:
 
 ```bash
-VERSION=0.8.1
+OS=linux
+ARCH=amd64
+
+curl -fLO "https://github.com/dorgu-ai/dorgu/releases/latest/download/dorgu_${OS}_${ARCH}.tar.gz"
+tar -xzf "dorgu_${OS}_${ARCH}.tar.gz" dorgu
+chmod +x dorgu
+sudo mv dorgu /usr/local/bin/
+```
+
+That URL is an unversioned alias that always resolves to the newest release, so it never needs a version bump. It was first published with **v0.9.0**; for anything older, use the pinned form below.
+
+To pin an exact release instead:
+
+```bash
+VERSION=0.9.0
 OS=linux
 ARCH=amd64
 ARCHIVE="dorgu_${VERSION}_${OS}_${ARCH}.tar.gz"
@@ -54,13 +54,14 @@ The archive also contains `README.md`, `LICENSE`, and `.dorgu.yaml.example`; nam
 
 ### Windows
 
-Download `dorgu_0.8.1_windows_amd64.zip` (or `_arm64`) from the releases page, extract it, and put `dorgu.exe` somewhere on your `PATH`.
+Download `dorgu_windows_amd64.zip` (or `_arm64`) from the [latest release](https://github.com/dorgu-ai/dorgu/releases/latest), extract it, and put `dorgu.exe` somewhere on your `PATH`. The pinned form is `dorgu_0.9.0_windows_amd64.zip`.
 
 ### Verifying the download
 
-Each release publishes `checksums.txt`:
+Each release publishes `checksums.txt`, which covers the versioned archives:
 
 ```bash
+VERSION=0.9.0
 curl -fLO "https://github.com/dorgu-ai/dorgu/releases/download/v${VERSION}/checksums.txt"
 
 # Linux
@@ -68,6 +69,24 @@ sha256sum --ignore-missing -c checksums.txt
 # macOS
 shasum -a 256 --ignore-missing -c checksums.txt
 ```
+
+## Go install
+
+With a Go toolchain, install the latest release:
+
+<GoInstall />
+
+Or pin a specific version:
+
+```bash
+go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.9.0
+```
+
+<Note>
+  `v0.9.0` is the version this page is pinned to. Check [CLI releases](https://github.com/dorgu-ai/dorgu/releases) for the newest, or use `@latest` to always get it.
+</Note>
+
+Ensure `$GOPATH/bin` (or `$HOME/go/bin`) is in your `PATH`.
 
 ## From source
 
@@ -87,14 +106,19 @@ dorgu version
 From a release archive, the commit and build date are stamped in:
 
 ```
-dorgu version v0.8.1
-Build: 7771a22 @ 2026-08-07T22:18:53Z
+dorgu version v0.9.0
+Build: e8a7352 @ 2026-08-16T17:08:49Z
 ```
 
 `go install github.com/dorgu-ai/dorgu/cmd/dorgu@...` cannot set those build flags, so it prints `Build: from source` instead. That is a working install, not a broken one. Building from a clone with `make build` or `make install` does stamp the commit and date.
 
 ## Next steps
 
-<Card title="Quickstart" icon="rocket" href="/cli/quickstart">
-  Generate your first Kubernetes manifests in 5 minutes.
-</Card>
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/cli/quickstart">
+    Break an app and watch Dorgu diagnose and heal it.
+  </Card>
+  <Card title="Already have apps running?" icon="download" href="/cli/quickstart#brownfield-a-cluster-that-already-has-apps">
+    Import personas from your live Deployments so Dorgu can see them.
+  </Card>
+</CardGroup>

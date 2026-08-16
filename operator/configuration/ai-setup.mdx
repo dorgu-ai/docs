@@ -3,6 +3,8 @@ title: "AI setup"
 description: "Enable AI diagnosis and AI remediation planning with your own Anthropic API key"
 ---
 
+import OperatorInstallAI from '/snippets/operator-install-helm-ai.mdx';
+
 Dorgu's AI features are **optional and bring-your-own-key**. Detection, diagnosis, and rule-based remediation all work with no key at all — the AI layer adds root-cause enhancement and the ordered, multi-step remediation plans described in [Self-healing](/operator/features/self-healing).
 
 ## What you are opting into
@@ -30,17 +32,11 @@ Dorgu's AI features are **optional and bring-your-own-key**. Detection, diagnosi
   </Step>
 
   <Step title="Install or upgrade the operator">
-    ```bash
-    helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-      -n dorgu-system --create-namespace \
-      --set healthCheck.enabled=true --set healthCheck.interval=30s \
-      --set metricsServer.enabled=true --set websocket.enabled=true \
-      --set llm.provider=claude \
-      --set llm.existingSecret=dorgu-llm --set llm.existingSecretKey=ANTHROPIC_API_KEY \
-      --set aiRemediation.enabled=true
-    ```
+    <OperatorInstallAI />
 
-    Omitting `--version` resolves the newest published chart. To pin an exact version, see the [installation guide](/operator/installation).
+    This is the [canonical install command](/operator/installation#helm-recommended) plus the four AI flags, which are the only ones AI needs. Detection and metrics-server integration are already on by default; add `--set websocket.enabled=true` if you also want live `dorgu watch` streaming.
+
+    Omitting `--version` resolves the newest published chart. To pin an exact version, see the [installation guide](/operator/installation#pin-a-chart-version).
   </Step>
 
   <Step title="Verify">
@@ -60,8 +56,12 @@ Dorgu's AI features are **optional and bring-your-own-key**. Detection, diagnosi
 </Steps>
 
 <Note>
-  `healthCheck.enabled=true` is what turns the self-healing loop on at all. AI configuration without it gives you a correctly configured operator that has nothing to diagnose.
+  **Detection is already on.** Since chart 0.8.0 `healthCheck.enabled` defaults to `true`, so there is no longer a flag to remember here. If you explicitly set `healthCheck.enabled=false`, AI configuration gives you a correctly configured operator with nothing to diagnose.
 </Note>
+
+<Warning>
+  **AI is deliberately the one thing you have to opt into.** Detection and rule-based diagnosis are local and free, so they are on out of the box. Inference costs money and sends incident context to a third party, so that consent stays explicit: no `llm.provider`, no key, no `aiRemediation.enabled`, no API calls and no spend.
+</Warning>
 
 ## Values reference
 

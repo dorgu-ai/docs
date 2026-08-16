@@ -18,8 +18,17 @@ The `version` command outputs build metadata embedded at compile time. This is u
 ## Example output
 
 ```
-dorgu version v0.8.0
-Build: d4d7983 @ 2026-07-09T01:15:55Z
+dorgu version v0.9.0
+Build: e8a7352 @ 2026-08-16T17:08:49Z
 ```
 
-When the binary is built from source without release metadata, the second line reads `Build: from source`.
+The commit and date are stamped in by the release build, so you only see them when the binary came from a release archive or from a local `make build` / `make install`.
+
+`go install github.com/dorgu-ai/dorgu/cmd/dorgu@...` cannot set those linker flags, so it prints:
+
+```
+dorgu version v0.9.0
+Build: from source
+```
+
+That is a working install, not a broken one. See [installation](/cli/installation#verify-installation).
