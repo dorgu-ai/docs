@@ -3,11 +3,13 @@ title: "Quickstart"
 description: "Install the operator with AI self-healing on and watch it diagnose a real failure in 5 minutes"
 ---
 
+import OperatorInstallAI from '/snippets/operator-install-helm-ai.mdx';
+
 This guide installs the Dorgu Operator with the self-healing loop and AI planning enabled, then walks a real incident from detection to healed.
 
-## Step 1: Install the operator with self-healing on
+## Step 1: Install the operator
 
-The self-healing loop is off by default. `healthCheck.enabled=true` turns it on.
+The self-healing loop is **on by default** as of chart 0.8.0. AI is the part you opt into.
 
 ```bash
 kubectl create namespace dorgu-system
@@ -15,17 +17,17 @@ kubectl create namespace dorgu-system
 # Optional — enables AI diagnosis and AI-written remediation plans
 kubectl create secret generic dorgu-llm -n dorgu-system \
   --from-literal=ANTHROPIC_API_KEY=sk-ant-...
-
-helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  -n dorgu-system \
-  --set healthCheck.enabled=true --set healthCheck.interval=30s \
-  --set metricsServer.enabled=true \
-  --set llm.provider=claude \
-  --set llm.existingSecret=dorgu-llm --set llm.existingSecretKey=ANTHROPIC_API_KEY \
-  --set aiRemediation.enabled=true
 ```
 
-Omitting `--version` resolves the newest published chart. To pin an exact chart version, see the [installation guide](/operator/installation). Drop the `llm` and `aiRemediation` flags to run rule-based — detection, diagnosis, and remediation all work without a key.
+Then install the operator:
+
+<OperatorInstallAI />
+
+Omitting `--version` resolves the newest published chart. To pin an exact chart version, see the [installation guide](/operator/installation). Drop the `llm` and `aiRemediation` flags to run rule-based: detection, diagnosis, and remediation all work without a key. `healthCheck.interval=30s` only tightens the loop for the demo; the default is 60s. Metrics-server integration is on by default and adds container-level usage signals.
+
+<Note>
+  To install the operator without the detection loop, add `--set healthCheck.enabled=false`. It will still validate personas and discover the cluster, but it will never open an incident or propose a fix.
+</Note>
 
 ```bash
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=dorgu-operator \
@@ -55,11 +57,13 @@ dorgu health
   On a managed cluster (EKS, GKE, AKS) the control plane is not visible as pods, so it is reported as `Healthy (external/managed)`. That is expected.
 </Note>
 
+If the cluster already runs applications, `dorgu health` also prints an `Unmonitored` section naming the Deployments no persona covers. That is the blind spot, and [step 3b](#step-3b-brownfield-a-cluster-that-already-has-apps) closes it.
+
 To manage the ClusterPersona yourself via GitOps instead, install with `--set operator.autoCreateClusterPersona=false` and apply your own.
 
 ## Step 3: Give the operator something to watch
 
-The operator only acts on applications that have an `ApplicationPersona`, and it correlates signals to personas **by name prefix** — so the persona name must match the pod names.
+The operator only acts on applications that have an `ApplicationPersona`, and it correlates a signal to a persona **by name prefix**, so the persona name must be a prefix of the pod names.
 
 ```bash
 dorgu persona apply ./my-app -n demo
@@ -105,6 +109,37 @@ dorgu persona status nginx -n demo
 ```
 
 The operator validates the running Deployment against the persona and reports issues in `.status.validation.issues` — missing resource requests, an unenforced `runAsNonRoot`, a missing liveness probe. The phase reflects the overall state (`Active`, `Degraded`, or `Failed`), and it re-validates every 60 seconds or immediately when the Deployment changes. See [validation](/operator/features/validation).
+
+<Note>
+  **No label is required on the Deployment.** The operator resolves a persona to its workload through an ordered chain: the `app.kubernetes.io/name` label on the Deployment, then the `app` label, then `metadata.name`, then `spec.selector.matchLabels`. Helm, kustomize, and most hand-written YAML label the pod template only, and that resolves through the last rung. When it cannot resolve, the persona reports `NoDeployment` or `AmbiguousDeployment` and names what it tried: see [troubleshooting](/operator/features/self-healing#troubleshooting).
+</Note>
+
+## Step 3b: Brownfield, a cluster that already has apps
+
+Writing a persona by hand is fine for one app. It is not how you onboard a cluster that already runs twenty of them, and until a persona exists the operator sees nothing: no persona means no incident, which means no proposed fix.
+
+`dorgu persona import` reads the live Deployments and synthesizes a persona for each from what is already in the spec: resources, probes, replicas, ports, image, and ownership labels. No local source, no Dockerfile, no relabelling.
+
+```bash
+# What is Dorgu not watching?
+dorgu health
+
+# Read the personas before anything reaches the cluster.
+# Diagnostics go to stderr, so the redirect is safe.
+dorgu persona import -n apps --all > personas.yaml
+
+# Apply them
+kubectl apply -f personas.yaml        # or: dorgu persona import -n apps --all --apply
+
+# Confirm each one resolved to its Deployment
+dorgu persona list -n apps
+```
+
+<Warning>
+  Pay attention to the inferred-limits warning. Where a container declares no resource limits, import derives them and says which ones it invented. The remediation proposer skips any persona without limits, so a persona with limits nobody chose will heal against the wrong numbers. Review them before you rely on them.
+</Warning>
+
+The full walkthrough, including breaking an imported app and healing it, is in the [CLI quickstart](/cli/quickstart#brownfield-a-cluster-that-already-has-apps). Requires CLI v0.9.0 or newer.
 
 ## Step 4: Break something and watch the loop
 
@@ -153,5 +188,8 @@ kubectl -n demo get pods
   </Card>
   <Card title="Configuration" icon="gear" href="/operator/configuration/overview">
     Flags for webhooks, ArgoCD, Prometheus, and WebSocket
+  </Card>
+  <Card title="dorgu persona import" icon="download" href="/cli/commands/persona#persona-import">
+    Create personas from the Deployments you already run
   </Card>
 </CardGroup>

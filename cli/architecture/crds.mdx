@@ -109,7 +109,7 @@ The spec defines the desired operational profile for an application.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | Yes | Application name (matches `app.kubernetes.io/name` label) |
+| `name` | string | Yes | Application name. The value the operator resolves a Deployment by, via the [discovery chain](/operator/features/self-healing#how-a-persona-finds-its-deployment): `app.kubernetes.io/name` label, `app` label, `metadata.name`, then `spec.selector.matchLabels`. No label is required. |
 | `type` | enum | Yes | `api`, `web`, `worker`, `cron`, `daemon` |
 | `tier` | enum | No | `critical`, `standard`, `best-effort` |
 | `technical` | object | No | Language, framework, and description |

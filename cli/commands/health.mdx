@@ -15,11 +15,16 @@ Display a comprehensive cluster health summary by querying the Kubernetes API di
 
 When the Dorgu Operator is installed, the command shows richer data sourced from `ClusterPersona` resource summaries, `IncidentMemory` CRDs, and `RemediationAction` CRDs. Without the operator, it gracefully degrades to node and control plane information only.
 
+It also names what it **cannot** see: any Deployment with no matching `ApplicationPersona` is listed under [Unmonitored](#unmonitored-deployments), because a workload Dorgu is not watching can never appear as an incident.
+
 ## Flags
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-n, --namespace` | string | all namespaces | Filter incidents by namespace |
+| `-n, --namespace` | string | all namespaces | Filter incidents by namespace, and include that namespace's Deployments in the unmonitored check even if it is a cluster add-on namespace |
+| `--exit-code` | bool | `false` | Exit 2 when critical incidents are active, 3 when health cannot be judged. For monitoring scripts. |
+| `-w, --watch` | bool | `false` | Stream health updates in real time over WebSocket. Requires the operator running with `--enable-websocket`. |
+| `--operator-url` | string | `ws://localhost:9090/ws` | WebSocket URL of the operator, used with `--watch` |
 | `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
 | `--json` | bool | `false` | Output as JSON (inherited global flag) |
 
@@ -32,6 +37,52 @@ When the Dorgu Operator is installed, the command shows richer data sourced from
 | **Control Plane** | Pods in `kube-system` with `tier=control-plane` | Health of API Server, Scheduler, Controller Manager, etcd |
 | **Active Incidents** | `IncidentMemory` CRDs (operator required) | Severity, category, signal, persona reference, age |
 | **Pending Remediations** | `RemediationAction` CRDs (operator required) | Count of remediations in `Pending` or `Approved` phase |
+| **Unmonitored** | Deployments with no matching `ApplicationPersona` | The Deployments Dorgu is not watching, and the command to onboard them |
+
+## Unmonitored Deployments
+
+Dorgu only watches workloads that have an `ApplicationPersona`. A Deployment without one raises no incident no matter what it does, so reporting `Active Incidents: 0` for a cluster full of unmonitored apps would present a blind spot as health.
+
+The `Unmonitored` section names them:
+
+```
+Unmonitored: 3 Deployment(s) have no ApplicationPersona and are not being watched
+  apps/api, apps/report-worker, apps/web
+  → run: dorgu persona import -n apps --all
+```
+
+| Behaviour | Detail |
+|-----------|--------|
+| Scope | All namespaces by default. Cluster add-on namespaces (`kube-system`, `kube-public`, `kube-node-lease`, `dorgu-system`, and similar) are skipped unless you name one with `-n`. |
+| Cap | The printed list stops at 10 names and says how many it left out. The count and the `--json` list are never capped. |
+| Hint | One `dorgu persona import` line per namespace that has uncovered Deployments. |
+| Nothing to report | A fully covered cluster prints no section at all. |
+| CRD missing | Reported as `the ApplicationPersona CRD is not installed`, which is a fact about the operator rather than about your apps, with `dorgu cluster setup` as the hint. |
+
+Coverage is decided with the same [discovery chain](/operator/features/self-healing#how-a-persona-finds-its-deployment) the operator uses, so a Deployment labelled only on its pod template counts as monitored. See [`dorgu persona import`](/cli/commands/persona#persona-import).
+
+## Exit codes
+
+```bash
+dorgu health --exit-code
+```
+
+| Code | Meaning | Needs `--exit-code`? |
+|------|---------|----------------------|
+| `0` | The cluster was read and no critical incident is active | No |
+| `1` | The check could not run: unreachable cluster, bad kubeconfig, no `kubectl` | No |
+| `2` | Active critical incidents | **Yes** |
+| `3` | Health could not be judged, for example the incident records are unreadable | **Yes** |
+
+Without `--exit-code` the command exits 0 whenever it managed to read the cluster, so interactive use is unchanged.
+
+<Warning>
+  **An unreachable cluster always exits 1, with no flag to opt out.** The command probes the API server before it renders anything, and no summary is produced from a failed call. It used to exit 0 with an empty node table and `Active Incidents: 0`, which meant a monitoring script could not tell "healthy" from "on fire" from "cannot see the cluster".
+
+  If you have a job that alerts on any non-zero exit, it will now alert when the cluster is unreachable. That is intended, but check the job before upgrading if a transient VPN or kubeconfig failure would page someone.
+</Warning>
+
+The API-server probe reads `/version`, which any authenticated user can read, so a namespace-scoped role is not mistaken for an unreachable cluster.
 
 ## Examples
 
@@ -45,8 +96,22 @@ dorgu health --json
 # Filter incidents to a specific namespace
 dorgu health -n production
 
+# Fail the build when something critical is active
+dorgu health --exit-code
+
 # Use a specific kubeconfig
 dorgu health --kubeconfig /path/to/kubeconfig
+```
+
+```bash
+# In a monitoring job
+dorgu health --exit-code --json > health.json
+case $? in
+  0) echo "healthy" ;;
+  1) echo "cannot reach the cluster" ;;
+  2) echo "critical incidents active" ;;
+  3) echo "health could not be judged" ;;
+esac
 ```
 
 ## JSON output
@@ -85,10 +150,33 @@ When `--json` is set, the output follows this structure:
       }
     ]
   },
-  "pendingRemediations": { "count": 0 }
+  "pendingRemediations": { "count": 0 },
+  "unmonitored": {
+    "count": 2,
+    "items": [
+      { "namespace": "apps", "name": "report-worker" },
+      { "namespace": "apps", "name": "web" }
+    ],
+    "namespaces": ["apps"]
+  }
+}
+```
+
+`unmonitored.items` is the full, uncapped list even when the human-readable output truncated it. `unmonitored.personaCRDMissing` is present and `true` when the `ApplicationPersona` CRD is not installed.
+
+When the incident records cannot be read at all, `activeIncidents` carries `"unavailable": true` and a `"reason"` string instead of a count of `0`, so a reader can tell "none" from "unknown":
+
+```json
+{
+  "activeIncidents": {
+    "count": 0,
+    "items": [],
+    "unavailable": true,
+    "reason": "the server doesn't have a resource type \"incidentmemories\""
+  }
 }
 ```
 
 <Note>
-  Requires `kubectl` in your PATH. Resource saturation data requires the Dorgu Operator and a `ClusterPersona` resource. Incident and remediation data requires `IncidentMemory` and `RemediationAction` CRDs — if these CRDs are not installed, those sections show zero counts.
+  Requires `kubectl` in your PATH. Resource saturation data requires the Dorgu Operator and a `ClusterPersona` resource. Incident and remediation data requires the `IncidentMemory` and `RemediationAction` CRDs; when they are absent that is reported as unavailable rather than as a count of zero.
 </Note>

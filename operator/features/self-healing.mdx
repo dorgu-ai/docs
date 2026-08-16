@@ -151,19 +151,120 @@ See the [trust model](/cli/architecture/trust-model) for how the levels are mean
 
 | Component | Required? | What you lose without it |
 |-----------|-----------|--------------------------|
-| `healthCheck.enabled=true` | **Yes** | The whole loop. Detection is off by default. |
-| An ApplicationPersona per app | **Yes** | Signals have nothing to correlate to, so no incident is opened |
+| `healthCheck.enabled` | **Yes**, and **`true` by default** since chart 0.8.0 | The whole loop. Set it to `false` to run validation and discovery only. |
+| An ApplicationPersona per app | **Yes** | Signals have nothing to correlate to, so no incident is opened. On a cluster that already has apps, create them with [`dorgu persona import`](/cli/commands/persona#persona-import). |
 | Resource **limits** on the persona | **Yes** for resource fixes | The proposer skips with `persona has no resource limits configured` |
+| A label on the Deployment | **No** | Nothing. Resolution walks a fallback chain (below) and pod-template-only labelling resolves fine. |
 | metrics-server | No | Container-level CPU/memory usage and saturation signals. OOM and crash-loop detection still work. |
 | Prometheus | No | Learned resource baselines in `status.learned.resourceBaseline`, which the AI uses to size fixes |
 | Anthropic API key | No | AI diagnosis and AI ordered plans. Rule-based detection, diagnosis, and remediation all still work. |
 | WebSocket | No | Live `dorgu watch remediations` streaming |
 
+### How a persona finds its Deployment
+
+Two separate lookups run in the loop, and confusing them is the usual reason nothing happens.
+
+**Persona to Deployment.** The operator lists every Deployment in the persona's namespace and walks an ordered chain, taking the first rung that matches exactly one Deployment:
+
+| Order | Rung | Read from |
+|-------|------|-----------|
+| 1 | `app.kubernetes.io/name` label | The Deployment object |
+| 2 | `app` label | The Deployment object |
+| 3 | `metadata.name` | The Deployment object |
+| 4 | `spec.selector.matchLabels` | Either `app.kubernetes.io/name` or `app` in the selector |
+
+Earlier rungs are more explicit statements of intent, so they win. The value matched against every rung is the persona's `spec.name`.
+
+<Note>
+  **No label is required.** Helm, kustomize, and most hand-written YAML label the pod template only and leave the Deployment object bare; rung 3 or rung 4 resolves those. Requiring a label on the Deployment object is what used to leave personas for pre-existing apps `Pending` forever. The `dorgu` CLI walks the identical chain when it picks the Deployment to patch, so the CLI and the operator never disagree about which workload a persona describes.
+</Note>
+
+If a rung matches several Deployments, the persona reports `AmbiguousDeployment` and names the candidates rather than patching one at random. If no rung matches anything, it reports `NoDeployment` and lists every rung it tried.
+
+**Signal to persona.** Detection goes the other way and matches by **name prefix**: a signal about resource `X` is attributed to a persona when `X` equals the persona's `metadata.name` or `spec.name`, or starts with either followed by a hyphen. That is what handles pod suffixes, so a persona named `memhog` picks up `memhog-7d9f-x2k`. A persona named `api` will never pick up pods named `api-server-...`.
+
 ## Troubleshooting
 
 <AccordionGroup>
+  <Accordion title="Nothing happens at all: no incidents, no remediations, on a cluster full of running apps">
+    Almost always the same cause: **those apps have no `ApplicationPersona`**. Dorgu only watches workloads that have one, so a broken app with no persona raises no incident, which means no diagnosis and no proposed fix. Nothing is misconfigured; there is simply nothing registered to watch.
+
+    Ask Dorgu what it cannot see:
+
+    ```bash
+    dorgu health
+    ```
+
+    The `Unmonitored` section names every Deployment with no matching persona and prints an import command per namespace. Then create them from the live Deployments:
+
+    ```bash
+    dorgu persona import -n <namespace> --all           # read them first
+    dorgu persona import -n <namespace> --all --apply    # then create them
+    ```
+
+    Requires CLI v0.9.0 or newer. See [`dorgu persona import`](/cli/commands/persona#persona-import) and the [brownfield walkthrough](/cli/quickstart#brownfield-a-cluster-that-already-has-apps).
+  </Accordion>
+
+  <Accordion title="A persona sits in Pending with reason NoDeployment">
+    The persona exists but the operator could not find the workload it describes. The condition message lists every rung it tried:
+
+    ```
+    No Deployment in namespace apps matches persona "checkout" by
+    label app.kubernetes.io/name, label app, metadata.name, spec.selector.matchLabels
+    ```
+
+    Check it with:
+
+    ```bash
+    kubectl get applicationpersona <name> -n <namespace> \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")]}{"\n"}'
+    kubectl get deployments -n <namespace>
+    ```
+
+    Common causes, in the order worth checking:
+
+    - **The persona is in the wrong namespace.** Resolution never leaves the persona's own namespace. The Deployment being one namespace over looks identical to it not existing.
+    - **`spec.name` does not match anything.** The chain matches `spec.name`, not `metadata.name`. Set `spec.name` to the Deployment's name, or add `app.kubernetes.io/name: <spec.name>` to the Deployment object.
+    - **The Deployment genuinely is not there yet.** The persona re-resolves on the next reconcile, so this clears itself once the workload lands.
+
+    `dorgu persona import` picks a `spec.name` that resolves back to the Deployment it read, so imported personas do not hit this.
+  </Accordion>
+
+  <Accordion title="A persona sits in Pending with reason AmbiguousDeployment">
+    Several Deployments matched the same rung, and picking one arbitrarily is how the wrong workload gets patched. The message names the candidates and the fix:
+
+    ```
+    2 Deployments match persona "web" by label app (web-blue, web-green);
+    set app.kubernetes.io/name=web on exactly one
+    ```
+
+    Do exactly that: `app.kubernetes.io/name` is rung 1, so setting it on the one Deployment you mean outranks the collision on a later rung. Alternatively, split them into one persona per Deployment with distinct `spec.name` values.
+
+    For a one-off CLI heal you can bypass discovery entirely with `dorgu remediation heal <name> -n <ns> --workload web-blue`. That fixes the single apply, not the persona, so the operator keeps reporting `AmbiguousDeployment` until the labels say what you mean.
+  </Accordion>
+
   <Accordion title="No incident is created, even though the pod is crash-looping">
-    Signals are correlated to a persona by name. The persona matches a resource when the resource name equals the persona name (or `spec.name`), or **starts with it followed by a hyphen** — which is how pod suffixes are handled. If your persona is `api` but the pods are `api-server-7d9f-x2k`, nothing matches. Name the persona so it prefix-matches the pods, and make sure it lives in the same namespace as the workload.
+    Assuming the app does have a persona, check the **name prefix**. Signals are correlated to a persona by name: the persona matches when the resource name equals the persona's `metadata.name` or `spec.name`, or **starts with either followed by a hyphen**, which is how pod suffixes are handled. If your persona is `api` but the pods are `api-server-7d9f-x2k`, nothing matches. Name the persona so it prefix-matches the pods, and make sure it lives in the same namespace as the workload.
+
+    Note that this is a different lookup from persona-to-Deployment resolution, which needs no label and no prefix. A persona can be `Active`, having resolved its Deployment cleanly, and still collect no incidents because the pod names do not prefix-match. See [how a persona finds its Deployment](#how-a-persona-finds-its-deployment).
+  </Accordion>
+
+  <Accordion title="The operator is installed but detects nothing">
+    Since chart **0.8.0** detection is on by default, so this should not happen on a fresh install. Confirm what the pod is actually running:
+
+    ```bash
+    kubectl -n dorgu-system get deploy dorgu-operator \
+      -o jsonpath='{.spec.template.spec.containers[0].args}{"\n"}'
+    ```
+
+    You want `--enable-health-check=true`. If it reads `false`, either the values set it or the release predates 0.8.0:
+
+    ```bash
+    helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+      -n dorgu-system --reuse-values --set healthCheck.enabled=true
+    ```
+
+    Also check that all five CRDs are present. Detection cannot record anything without `incidentmemories.dorgu.io`. See [installation](/operator/installation#verify-installation).
   </Accordion>
 
   <Accordion title="An incident exists, but no remediation is proposed">
