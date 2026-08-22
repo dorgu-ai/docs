@@ -125,19 +125,35 @@ The user (or CLI) creates and manages the `.spec` of each persona. The operator 
 
 ## RBAC model
 
-The operator needs read access to cluster resources and write access only to Persona status:
+Every write verb the operator holds targets a `dorgu.io` CRD, a Kubernetes `Event`, or a leader-election `Lease`. Everything else in the cluster is read-only.
 
 | Resource | Verbs | Purpose |
 |----------|-------|---------|
-| ApplicationPersonas | get, list, watch, update (status) | Reconcile and update status |
-| ClusterPersonas | get, list, watch, update (status) | Reconcile and update status |
-| Deployments | get, list, watch | Validate against persona constraints |
-| Pods | get, list | Check pod health, count running pods |
-| Nodes | get, list | Discover cluster capacity |
-| Namespaces | get, list | Count namespaces |
-| ArgoCD Applications | get, list, watch | Sync status tracking (optional) |
+| `applicationpersonas` (+ `/status`, `/finalizers`) | get, list, watch, create, update, patch, delete | Reconcile personas; write status. The `spec` is patched only via a human-approved `RemediationAction`. |
+| `clusterpersonas` (+ `/status`, `/finalizers`) | get, list, watch, create, update, patch, delete | Auto-create and reconcile the singleton `dorgu-cluster` |
+| `incidentmemories` (+ `/status`) | get, list, watch, create, update, patch | Open and update incident records. No `delete`. |
+| `remediationactions` (+ `/status`) | get, list, watch, create, update, patch | Propose fixes and record their lifecycle. No `delete`. |
+| `dorguevents` | create, get, list, watch | Write-once classified events. No `update`, no `delete`. |
+| `apps/deployments`, `apps/replicasets` | **get, list, watch** | Persona validation, ownership detection, pod-to-Deployment correlation |
+| `pods`, `namespaces`, `nodes` | get, list, watch | Detection signals and cluster discovery |
+| `events` | get, list, watch, create, patch | The event watcher, plus recording Dorgu's own Kubernetes Events |
+| `metrics.k8s.io/pods` | get, list | Container-level usage and saturation. Needs metrics-server; optional. |
+| `coordination.k8s.io/leases` | get, list, watch, create, update, patch, delete | Leader election, when `leaderElection.enabled=true` |
+| `argoproj.io/applications` | get, list, watch | Sync status tracking. Only when `argocd.enabled=true`. |
+
+<Warning>
+  **No `create`, `update`, `patch`, or `delete` on Deployments. No access to Secrets.** There are no rules for Services, StatefulSets, DaemonSets, ConfigMaps, or RBAC resources at all. That is what makes "the operator never writes workloads" a fact about your API server rather than a promise about Dorgu's source code.
+
+  The full ClusterRole, the denied verbs called out explicitly, and a `kubectl auth can-i` recipe to verify it on your own cluster: [security and permissions](/security-and-permissions).
+</Warning>
 
 <CardGroup cols={2}>
+  <Card title="Security and permissions" icon="shield-check" href="/security-and-permissions">
+    The ClusterRole in full, and what it deliberately omits
+  </Card>
+  <Card title="Ownership model" icon="user-lock" href="/ownership-model">
+    Which workloads the CLI will patch, and which it only recommends for
+  </Card>
   <Card title="CRD specification" icon="file-code" href="/cli/architecture/crds">
     Full ApplicationPersona and ClusterPersona schema
   </Card>

@@ -141,6 +141,12 @@ dorgu persona list -n apps
 
 The full walkthrough, including breaking an imported app and healing it, is in the [CLI quickstart](/cli/quickstart#brownfield-a-cluster-that-already-has-apps). Requires CLI v0.9.0 or newer.
 
+<Warning>
+  **On a brownfield cluster, expect most of these workloads to be owned.** For a Deployment that Helm, ArgoCD, Flux, or kustomize reconciles, Dorgu detects and diagnoses exactly as it does for anything else, but it is **recommendation only**: it names the owner and tells you what to change in your source of truth rather than patching the Deployment. Patching an owned workload claims those fields away from its owner, and the next `helm upgrade` then fails outright rather than quietly reverting.
+
+  Read [the ownership model](/ownership-model) before your first approval on a real cluster. It also covers the version coupling: **CLI v0.10.0 pairs with operator v0.9.0**, and an older CLI will patch an owned Deployment regardless.
+</Warning>
+
 ## Step 4: Break something and watch the loop
 
 The fastest way to see self-healing work is a deliberate OOM. The [CLI quickstart](/cli/quickstart#3-deploy-an-app-that-will-break) has a ready-to-apply manifest: a container that allocates ~90 MB against a 64Mi limit, plus a matching persona.
@@ -162,6 +168,8 @@ dorgu remediation approve <remediation-name> -n demo
 
 The operator patches the `ApplicationPersona` spec — the app's desired state — and moves the remediation to `Applying`. The CLI then patches the Deployment with your credentials so the pod actually recovers.
 
+That last part happens only when nothing else owns the Deployment. The demo app is applied with `kubectl apply`, so it is `unmanaged` and Dorgu heals it. On an owned workload the CLI declines instead, exits `4`, and hands you the owner-shaped steps: nothing is approved and nothing changes. See [the ownership model](/ownership-model).
+
 ```bash
 kubectl -n demo get pods
 ```
@@ -171,12 +179,18 @@ kubectl -n demo get pods
 </Note>
 
 <Warning>
-  The operator never creates or modifies Deployments, Services, or any other workload resource. It updates Persona, Incident, and Remediation CRDs and recommends; applying workload changes stays with the CLI, ArgoCD, Flux, or `kubectl`.
+  The operator never creates or modifies Deployments, Services, or any other workload resource. It updates Persona, Incident, and Remediation CRDs and recommends; applying workload changes stays with the CLI, ArgoCD, Flux, or `kubectl`. That is RBAC, not convention: its ClusterRole grants only `get`, `list`, `watch` on Deployments, and no access to Secrets. Check it yourself on [security and permissions](/security-and-permissions).
 </Warning>
 
 ## Next steps
 
 <CardGroup cols={2}>
+  <Card title="Ownership model" icon="user-lock" href="/ownership-model">
+    Which workloads Dorgu patches, which it only recommends for, and why
+  </Card>
+  <Card title="Security and permissions" icon="shield-check" href="/security-and-permissions">
+    The operator's ClusterRole, and the verbs it deliberately lacks
+  </Card>
   <Card title="Self-healing in depth" icon="heart-pulse" href="/operator/features/self-healing">
     Signals, guardrails, verification, and troubleshooting
   </Card>

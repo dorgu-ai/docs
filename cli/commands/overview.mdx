@@ -101,8 +101,13 @@ Set `DORGU_DEBUG=1` to see `kubectl`'s raw output in error messages. By default 
 | `1` | Error: the command could not run. An unreachable cluster, a missing kubeconfig, no `kubectl`, a failed API call. |
 | `2` | `dorgu health --exit-code` only: active critical incidents |
 | `3` | `dorgu health --exit-code` only: health could not be judged |
+| `4` | `dorgu remediation approve` / `heal` only: **declined by design.** Dorgu understood the plan and chose not to write, because something else owns the workload. Nothing failed and nothing changed. |
 
 Codes 2 and 3 are opt-in and specific to [`dorgu health`](/cli/commands/health#exit-codes). An unknown subcommand is an error with a non-zero exit, not a help dump.
+
+<Warning>
+  **`4` is a decision, not a failure.** A wrapper that treats every non-zero exit as breakage will report a successful refusal as an error. Accept `4`, or use [`--no-heal`](/cli/commands/remediation#recording-a-decision-without-a-patch), which records the decision without a workload patch and exits `0`. See [the ownership model](/ownership-model#exit-code-4-declined-by-design).
+</Warning>
 
 ## Getting help
 
