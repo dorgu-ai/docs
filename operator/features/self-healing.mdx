@@ -25,12 +25,40 @@ flowchart LR
 | Diagnose | Rule-based provider, optionally AI-enhanced | Root cause + confidence, stored on `IncidentMemory` |
 | Propose | Rule-based proposer, optionally the AI planner | `RemediationAction` with an ordered `steps[]` plan |
 | Approve | You, via `dorgu remediation approve` | `phase: Approved` |
-| Heal | Operator (persona spec) + CLI (Deployment) | The pod recovers |
+| Heal | Operator (persona spec) + CLI (Deployment, **only if unmanaged**) | The pod recovers, or you get owner-shaped instructions |
 | Remember | Operator | `IncidentMemory.spec.resolution` with the outcome |
 
 <Warning>
-  **The invariant.** The operator never creates or modifies Deployments, Services, or any other workload resource. It reads cluster state, updates the Persona / Incident / Remediation CRDs, and recommends. Applying workload changes stays with ArgoCD, Flux, `kubectl`, or the Dorgu CLI — which uses **your** credentials, not the operator's.
+  **The invariant.** The operator never creates or modifies Deployments, Services, or any other workload resource. It reads cluster state, updates the Persona / Incident / Remediation CRDs, and recommends. This is enforced by RBAC, not by convention: its ClusterRole grants only `get`, `list`, and `watch` on Deployments, and no access to Secrets at all. The role is published in full on [security and permissions](/security-and-permissions).
+
+  Applying workload changes stays with ArgoCD, Flux, `kubectl`, or the Dorgu CLI, which uses **your** credentials, not the operator's.
 </Warning>
+
+## Understanding first: who owns the workload
+
+Detection and diagnosis run on every workload with a persona. **Healing does not.**
+
+As of operator v0.9.0 the operator reads the live Deployment at proposal time and records who owns it on `RemediationAction.spec.workloadRef.managedBy`, one of `helm`, `argocd`, `flux`, `kustomize`, `unmanaged`, or `unknown`. For anything except `unmanaged`, Dorgu is **understanding and recommendation only**: it detects, diagnoses, and tells you exactly what to change in *your* source of truth, and it will not patch the Deployment.
+
+The reason is concrete. Under server-side apply, patching a Helm-owned Deployment claims those fields away from Helm's field manager, and the next `helm upgrade` then **fails outright** with a field-manager conflict rather than quietly reverting the fix. A fix that breaks your next deploy is not a fix.
+
+| `managedBy` | Detection | Diagnosis | Proposal | CLI patches the Deployment |
+|-------------|-----------|-----------|----------|----------------------------|
+| `unmanaged` | Yes | Yes | Yes | **Yes** |
+| `helm`, `argocd`, `flux`, `kustomize` | Yes | Yes | Yes, shaped for the owner | No |
+| `unknown` (including an unresolvable Deployment) | Yes | Yes | Yes | No |
+
+For an owned workload the operator rewrites every step whose command would write to the cluster: the command is dropped, and the description becomes the chart values to set for a Helm release, the Git path for an ArgoCD application, or the overlay for kustomize. **Read-only commands survive**, because `kubectl logs` and `kubectl get events` matter most on exactly the workloads Dorgu will not touch.
+
+<Note>
+  **Persona writes are not gated on ownership.** A `persona-update` step patches the `ApplicationPersona`, the operator does that itself, and it is always safe whoever owns the workload. `autoExecutable` semantics are unchanged. Ownership governs one thing only: the CLI patching your Deployment.
+</Note>
+
+<Warning>
+  **The guard is enforced by the CLI, so upgrade both.** Operator v0.9.0 supplies the facts and strips the workload-writing commands; declining the patch is `dorgu remediation approve` / `heal`'s job, and that landed in **CLI v0.10.0**. An older CLI against a v0.9.0 operator will still patch an owned Deployment. See [version coupling](/ownership-model#version-coupling) for both mismatch directions.
+</Warning>
+
+Full detail, including how ownership is detected, exit code `4`, and what the refusal looks like: **[the ownership model](/ownership-model)**.
 
 ## Detect
 
@@ -53,20 +81,33 @@ When a signal stops appearing, the incident auto-resolves after a 5-minute grace
 
 Diagnosis turns raw signals into a root cause. The deterministic rule-based provider is **always on** and always the floor. It produces a summary, a category, a suggested action, and a confidence score computed from the rule's base confidence, how many correlated signals were seen, how unambiguous those signals are (an `OOMKilled` is clearer than a `PodPending`), and how tightly they cluster in time.
 
-With an Anthropic key configured, an AI provider runs afterwards and enhances those results with cluster context. Its diagnoses are recorded with `provider: ai-enhanced` versus `rule-based`. When two diagnoses describe the same category, action, and resources, the higher-confidence one wins — which naturally prefers the AI result when it is available and silently keeps the rule result when it is not.
+With an Anthropic key configured, an AI provider runs afterwards and enhances those results with cluster context. Its diagnoses are recorded with `provider: ai-enhanced` versus `rule-based`. When two diagnoses describe the same category, action, and resources, the higher-confidence one wins, and a **tie goes to the later provider**, the one enhancing the earlier result. That matters because an AI-enhanced diagnosis re-runs the rule-based logic and often carries the identical confidence to the digit, so a strict comparison used to drop every AI result silently. The losing diagnosis is now logged at INFO with the reason.
 
 Any LLM failure degrades to the rules. It never blocks the loop.
 
 ## Propose
 
+Every proposal starts from the **live workload**, not the persona.
+
+The `ApplicationPersona` is a point-in-time record, and on a brownfield cluster it drifts from the running Deployment. Dorgu used to compute sizes, state numbers, and diff as though the persona were authoritative, which is how it once quoted a 96Mi memory limit for a container that had been running with 32Mi for weeks. Since operator v0.9.0:
+
+- The operator reads the live Deployment at proposal time and records what it found on [`spec.workloadRef`](/ownership-model#specworkloadref): the workload's real name, the container, the observed image, and the observed `requests` and `limits`.
+- **Every stated fact comes from the live container**, and names the Deployment and container it was read from. Where the workload is unreadable, Dorgu says so and warns that the persona figure may have drifted.
+- **The blast-radius cap is measured against the live value**, not against whichever of persona and live is larger. Capping against the larger one permitted a 192Mi proposal on a 32Mi container whenever the persona was the stale, bigger number.
+- **A remediation may only change a resource key the workload already sets.** `observedResources` distinguishes absent from zero, so approving a memory fix can no longer silently introduce a CPU limit the Deployment never had. The rule-based path refuses and says why; the AI path drops the offending patch leaf, records the omission in the step rationale, and demotes a step whose patch is emptied by the pruning.
+- **The planner may only name versions Dorgu has actually read**, from the `dorgu.io/imported-image` annotation and `status.deployments`. It can no longer invent a prior-good image tag.
+
 With AI remediation planning enabled, the planner assembles the context it sends to Claude:
 
-- The affected **ApplicationPersona** — spec *and* status, including the learned resource baselines
+- A **`## Live workload (ground truth, read from the cluster just now)`** section, ahead of the persona: the observed container, its resources, and its image
+- The affected **ApplicationPersona**, spec *and* status, including the learned resource baselines, explicitly labelled a stale snapshot
 - The singleton **ClusterPersona** — platform, capacity, and the self-healing policy
 - Recent **IncidentMemory** records for the same application
 - The **RemediationActions those incidents referenced, with their phase and verification result** — so the model can see which past fixes actually worked and which were rolled back
 
-Claude returns an ordered plan. Each step carries an order, type, description, rationale, risk level, and an `autoExecutable` flag, and `persona-update` steps carry the JSON merge patch plus a `prePatchState` snapshot for rollback. The result lands on `RemediationAction.spec.steps[]` with `planSource: ai-anthropic`.
+Claude returns an ordered plan. Each step carries an order, type, description, rationale, risk level, an `autoExecutable` flag, and optionally a ready-to-run `command`; `persona-update` steps carry the JSON merge patch plus a `prePatchState` snapshot for rollback. The result lands on `RemediationAction.spec.steps[]` with `planSource: ai-anthropic`.
+
+For an owned workload the plan is then reshaped for its owner: see [what changes about the plan](/ownership-model#what-changes-about-the-plan).
 
 <Note>
   **Only `persona-update` steps may be auto-executable.** This is enforced at the Kubernetes API server by a CEL validation rule on the CRD, not merely in operator code. `workload-apply`, `restart`, `scale`, `config-change`, and `manual` steps are advisory — recorded for a human, the CLI, or your pipeline to act on. No plan can escalate itself.
@@ -82,14 +123,27 @@ Every proposal passes the safety checker before it is created.
 
 | Guardrail | Limit |
 |-----------|-------|
-| Blast radius | Resource increases capped at **2×**; decreases capped at 50% |
+| Blast radius | Resource increases capped at **2× the live container value**; decreases capped at 50%. Measured against `workloadRef.observedResources`, never against the persona. |
+| No new keys | A remediation may only change a resource key the container **already sets**. Approving a memory fix cannot silently add a CPU limit. |
+| Workload ownership | The CLI patches the Deployment only when `workloadRef.managedBy` is `unmanaged`. See [the ownership model](/ownership-model). |
 | Rate limit | **5 remediations per persona per hour** (override with `policies.selfHealing.maxRemediationsPerHour`) |
 | Concurrency | **One active remediation per persona** — a second is skipped while one is `Approved`, `Applying`, or `Verifying` |
 | Failure cooldown | 30 minutes after a `Failed` remediation for the same persona |
+| Rejection cooldown | A rejected remediation suppresses re-proposal for the same incident and target for **1 hour**, or until the signal materially changes |
 | Namespace deny list | `kube-system` and `dorgu-operator-system` always; plus anything in `policies.selfHealing.excludeNamespaces` |
 | Approval | **Required by default.** Every proposal is created with `approval.required: true` and phase `Pending`. |
 | Deduplication | One remediation per incident, and one per persona-plus-target — so an OOM that also trips a crash-loop yields **two incidents but one fix** |
 | Rollback | Automatic. The operator restores `prePatchState` when verification finds the health degraded. |
+
+<Note>
+  **Rejecting no longer costs you money 30 seconds later.** A `Rejected` action used to count as terminal and therefore non-blocking, so the next health-check cycle proposed the same fix again, including another billable planning call. The remediation controller now stamps a `Rejected` condition once, on first sight of the phase, and the health-check reconciler consults that history **before** calling the proposer.
+
+  Suppression lifts after an hour, or sooner when the signal materially changes: the live diagnosis outranks the severity the declined incident was opened at, so a warning someone waved off that has since gone critical is treated as a different question. An unreadable rejection history fails closed, and a rejection with no timestamp still suppresses, because an un-timestamped no is still a no.
+</Note>
+
+<Note>
+  **A discarded AI diagnosis is now visible.** Concurrent writes to an `IncidentMemory` used to drop the whole diagnosis with no retry and no record: one clean-room run lost 176 of them across 4 hours 20 minutes, and the dropped ones were the *better* ones. The spec write now retries with a re-fetch. If it still fails, the loss is logged at ERROR, recorded as a `DorguEvent`, and emitted as a Kubernetes Warning under the reason `DorguDiagnosisDiscarded`, so it shows up in `kubectl get events` and in log-based alerting. Every cycle ends with a tally.
+</Note>
 
 ## Verify and remember
 
@@ -155,6 +209,8 @@ See the [trust model](/cli/architecture/trust-model) for how the levels are mean
 | An ApplicationPersona per app | **Yes** | Signals have nothing to correlate to, so no incident is opened. On a cluster that already has apps, create them with [`dorgu persona import`](/cli/commands/persona#persona-import). |
 | Resource **limits** on the persona | **Yes** for resource fixes | The proposer skips with `persona has no resource limits configured` |
 | A label on the Deployment | **No** | Nothing. Resolution walks a fallback chain (below) and pod-template-only labelling resolves fine. |
+| A resolvable Deployment | **Yes** for grounding and for healing | Facts fall back to the persona with a drift warning, `managedBy` is `unknown`, advisory `kubectl` commands are dropped, and the heal is declined. |
+| CLI v0.10.0 or newer | **Yes** for the ownership guard | An older CLI ignores `workloadRef` and will patch a Deployment that Helm or ArgoCD owns. |
 | metrics-server | No | Container-level CPU/memory usage and saturation signals. OOM and crash-loop detection still work. |
 | Prometheus | No | Learned resource baselines in `status.learned.resourceBaseline`, which the AI uses to size fixes |
 | Anthropic API key | No | AI diagnosis and AI ordered plans. Rule-based detection, diagnosis, and remediation all still work. |
@@ -240,7 +296,9 @@ If a rung matches several Deployments, the persona reports `AmbiguousDeployment`
 
     Do exactly that: `app.kubernetes.io/name` is rung 1, so setting it on the one Deployment you mean outranks the collision on a later rung. Alternatively, split them into one persona per Deployment with distinct `spec.name` values.
 
-    For a one-off CLI heal you can bypass discovery entirely with `dorgu remediation heal <name> -n <ns> --workload web-blue`. That fixes the single apply, not the persona, so the operator keeps reporting `AmbiguousDeployment` until the labels say what you mean.
+    <Warning>
+      **`--workload` is no longer an escape hatch here.** As of CLI v0.10.0 the Deployment you name must match the one the operator recorded in `spec.workloadRef`, because an ownership decision made about one workload does not carry to another. When the operator could not resolve the persona at all, `managedBy` is `unknown` and the heal is declined regardless. Fix the labels; that is the only path through an `AmbiguousDeployment`.
+    </Warning>
   </Accordion>
 
   <Accordion title="No incident is created, even though the pod is crash-looping">
@@ -277,6 +335,49 @@ If a rung matches several Deployments, the persona reports `AmbiguousDeployment`
     Expected. A single OOM usually raises both `OOMKilled` and `CrashLoopBackOff`. Dedup runs at the remediation layer, not the incident layer, so you see two incidents and one fix. Approving that one fix resolves both.
   </Accordion>
 
+  <Accordion title="Approve prints &quot;Dorgu will not patch this workload&quot; and exits 4">
+    Working as designed. Something else owns that Deployment, so changing it belongs to that owner, and Dorgu declined rather than breaking their next apply. Exit code **4** (`ExitDeclined`) exists to say "declined by design" rather than "broke". Nothing was approved and nothing in the cluster changed.
+
+    The refusal names the owner and prints the owner-shaped steps. Apply the change there, then record the decision:
+
+    ```bash
+    dorgu remediation approve <name> -n <ns> --no-heal
+    ```
+
+    To see what Dorgu thinks owns it:
+
+    ```bash
+    kubectl get remediationaction <name> -n <ns> \
+      -o jsonpath='{.spec.workloadRef.managedBy}{" "}{.spec.workloadRef.managedByDetail}{"\n"}'
+    ```
+
+    If that reads `unknown` on a workload you know nothing reconciles, ownership detection found a server-side-apply field manager it does not recognise, and `managedByDetail` names it. `unknown` is treated as owned on purpose: nothing is patched on a guess. Full detail in [the ownership model](/ownership-model).
+  </Accordion>
+
+  <Accordion title="Every heal is declined, even on workloads nothing manages">
+    Check the operator version. `spec.workloadRef` is written by **operator v0.9.0 and newer**, and CLI v0.10.0 treats an absent record as owned, because it means either an operator too old to know or a workload that could not be read. Neither is evidence that patching is safe.
+
+    ```bash
+    kubectl get remediationaction <name> -n <ns> -o jsonpath='{.spec.workloadRef}{"\n"}'
+    ```
+
+    Empty output against a v0.10.0 CLI means an operator upgrade is what you need. Until then, `--no-heal` records decisions and you apply changes by hand. See [version coupling](/ownership-model#version-coupling).
+  </Accordion>
+
+  <Accordion title="The numbers Dorgu quotes do not match my pod">
+    They should, as of operator v0.9.0: every stated fact and every cap comes from the live container, and the explanation names the Deployment and container it read. If you are seeing persona figures quoted as current reality, you are on an older operator.
+
+    Compare what Dorgu observed against what is running:
+
+    ```bash
+    kubectl get remediationaction <name> -n <ns> -o jsonpath='{.spec.workloadRef}{"\n"}'
+    kubectl get deploy <deployment> -n <ns> \
+      -o jsonpath='{.spec.template.spec.containers[*].resources}{"\n"}'
+    ```
+
+    An empty string in `observedResources` means the container does not set that key, which is different from a value of zero, and is what stops a memory fix from adding a CPU limit. A `workloadRef` with no `name` means the operator could not resolve the Deployment at all: fix that first, since an unresolved workload loses its grounding and its advisory commands together.
+  </Accordion>
+
   <Accordion title="The remediation is stuck in Applying or Verifying">
     It is not stuck. The operator waits out the verification window — 10 minutes by default — before it will call the fix good. Check the pod itself: if it is `1/1 Running` with no new restarts, the heal worked and the phase will settle on its own.
   </Accordion>
@@ -289,6 +390,12 @@ If a rung matches several Deployments, the persona reports `AmbiguousDeployment`
 ## Next steps
 
 <CardGroup cols={2}>
+  <Card title="Ownership model" icon="user-lock" href="/ownership-model">
+    Which workloads Dorgu patches, which it only recommends for, and why
+  </Card>
+  <Card title="Security and permissions" icon="shield-check" href="/security-and-permissions">
+    The operator's ClusterRole, and the verbs it deliberately lacks
+  </Card>
   <Card title="Turn on AI" icon="sparkles" href="/operator/configuration/ai-setup">
     BYO Anthropic key, injected from a Secret in your own cluster
   </Card>

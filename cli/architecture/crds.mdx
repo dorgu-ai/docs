@@ -82,11 +82,13 @@ The CLI and GitOps tools define the desired state in the spec. The Operator obse
 The one exception is remediation: when you approve a `RemediationAction`, the Operator applies that action's JSON merge patch to the ApplicationPersona `spec`. That is a change you explicitly authorized, scoped to the fields in the proposal you reviewed. Nothing else lets the Operator write a spec.
 
 <Warning>
-  The Operator never creates or modifies Deployments, Services, or any other **workload** resource — with or without approval. Applying workload changes stays with the CLI, ArgoCD, Flux, or `kubectl`. See the [trust model](/cli/architecture/trust-model).
+  The Operator never creates or modifies Deployments, Services, or any other **workload** resource, with or without approval. Its ClusterRole grants `get`, `list`, `watch` on `apps/deployments` and no write verb at all, so this is enforced by the API server. See [security and permissions](/security-and-permissions) and the [trust model](/cli/architecture/trust-model).
 </Warning>
 
 <Note>
   If you manage personas through GitOps, an approved remediation's patch will show as drift on the next sync — mirror the change back into your repo so your pipeline does not revert the fix. `dorgu remediation approve --no-heal` does not avoid this: it skips the *Deployment* patch only, and the persona is still updated by the Operator once the action is `Approved`.
+
+  The one case where the persona is **not** updated is a refusal: on a workload something else owns, `approve` writes nothing at all, neither the Deployment patch nor the status patch that would trigger the persona write. See [the ownership model](/ownership-model).
 </Note>
 
 ## API Group and Scope
@@ -298,6 +300,7 @@ An incident auto-resolves once its signal has been absent for 5 minutes.
 | `trustLevel` | int | Yes | Minimum trust level required to execute, 0–5 |
 | `action` | object | Yes | Single-action fallback: `type`, `patch`, `prePatchState` |
 | `steps[]` | array | No | The ordered plan. When non-empty, this is the plan of record. |
+| `workloadRef` | object | No | The live workload this remediation concerns, and who owns it. Written by **operator v0.9.0+**. See below. |
 | `planSource` | enum | No | `rule-based` or `ai-anthropic` |
 | `planSummary` | string | No | The AI's root-cause and plan explanation |
 | `explanation` | string | Yes | Human-readable reason for the proposal |
@@ -306,6 +309,30 @@ An incident auto-resolves once its signal has been absent for 5 minutes.
 | `rollback` | object | No | `enabled` (default `true`), `healthCheckAfter`, `maxRetries` (default `1`) |
 
 `action.type` is one of `persona-update`, `notification`, or `git-pr`. `action.patch` is a JSON merge patch applied to the **Persona** spec — never to a workload.
+
+### `workloadRef` Fields
+
+The operator populates this from the **live** Deployment at proposal time. It exists because the persona is a point-in-time import that drifts from the running workload, so every stated fact and every blast-radius cap is grounded here rather than in the persona.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `kind` | enum | Yes | `Deployment`. The only kind resolved today. |
+| `name` | string | Yes | The live Deployment's `metadata.name`. **Not** the persona name: persona `frontend` commonly resolves to Deployment `frontend-podinfo`. |
+| `namespace` | string | Yes | The Deployment's namespace |
+| `container` | string | No | The container whose resources were observed, and which a fix would target |
+| `managedBy` | enum | Yes | `helm`, `argocd`, `flux`, `kustomize`, `unmanaged`, `unknown`. **Defaults to `unknown`.** |
+| `managedByDetail` | string | No | The specific owner in prose, e.g. `Helm release "frontend" in namespace apps`. Max 253 characters. |
+| `observedResources` | object | No | `requests` and `limits`, each a `cpu`/`memory` pair. **An empty string means the workload does not set that key**, which is distinct from a value of zero. |
+| `observedImage` | string | No | The container's live image reference including its tag. The only image Dorgu has read. |
+| `observedAt` | timestamp | No | When the live workload was read |
+
+<Warning>
+  **`managedBy` governs one thing: whether the CLI may patch the Deployment.** Only `unmanaged` permits it. Everything else, including `unknown` and an entirely **absent `workloadRef`**, means Dorgu recommends and does not write.
+
+  Absent is treated as owned on purpose: it means either an operator older than v0.9.0 or a workload that could not be read, and neither is evidence that patching is safe. Enforced by **CLI v0.10.0**. See [the ownership model](/ownership-model).
+
+  It has **no bearing on persona writes.** A `persona-update` step patches the `ApplicationPersona`, the operator does that itself, and its `autoExecutable` semantics are unchanged whoever owns the workload.
+</Warning>
 
 ### Step Fields
 
@@ -320,12 +347,17 @@ Each entry in `steps[]`:
 | `rationale` | string | Why the step is proposed (the AI's reasoning) |
 | `risk` | enum | `low`, `medium`, `high` |
 | `autoExecutable` | bool | Whether the operator may apply this step without external action |
+| `command` | string | An optional ready-to-run `kubectl` command for an advisory step. **Never executed** by the operator or the CLI. Sanitized before storage and re-checked before display. Operator v0.8.0+. |
 | `patch` | object | JSON merge patch for the Persona spec (`persona-update` steps) |
 | `prePatchState` | object | Snapshot of the fields before the patch, used for rollback |
 
 <Warning>
   `autoExecutable` may only be `true` on a `persona-update` step. This is enforced at the Kubernetes API server by a CEL validation rule on the CRD (`!self.autoExecutable || self.type == 'persona-update'`), not just in operator code. Every other step type is advisory, which is what preserves the operator's guarantee that it never writes workloads.
 </Warning>
+
+<Note>
+  **On an owned workload, steps are reshaped before they are persisted.** Where `workloadRef.managedBy` is anything but `unmanaged`, the operator drops the `command` from any step whose command writes to the cluster, rewrites `description` as what to change at the source (chart values for a Helm release, the Git manifests for an ArgoCD application), and appends one line to `rationale` on what a direct patch would have broken. Read-only commands such as `kubectl logs` survive. `persona-update` steps are never reshaped. See [what changes about the plan](/ownership-model#what-changes-about-the-plan).
+</Note>
 
 ### Status Fields
 

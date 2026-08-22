@@ -68,7 +68,9 @@
               "cli/architecture/cli-pipeline",
               "cli/architecture/data-flow",
               "cli/architecture/crds",
-              "cli/architecture/trust-model"
+              "cli/architecture/trust-model",
+              "ownership-model",
+              "security-and-permissions"
             ]
           }
         ]
@@ -96,12 +98,19 @@
             "group": "Features",
             "pages": [
               "operator/features/self-healing",
+              "ownership-model",
               "operator/features/validation",
               "operator/features/cluster-discovery",
               "operator/features/webhook",
               "operator/features/argocd",
               "operator/features/prometheus",
               "operator/features/websocket"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security-and-permissions"
             ]
           },
           {

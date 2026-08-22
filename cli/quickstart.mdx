@@ -140,8 +140,14 @@ Within a few seconds the pod goes `OOMKilled`, then `CrashLoopBackOff`. Left alo
 
   1. **The persona is named `memhog`, exactly like the Deployment.** The operator correlates a signal to a persona by name prefix, and pods are `memhog-<hash>`, so the persona must be `memhog`. Rename one and no incident gets a persona, and no fix is ever proposed. (Resolving a persona *back* to its Deployment is separate and needs no label at all: see [discovery](/operator/features/self-healing#prerequisites).)
   2. **The persona declares `resources.limits`.** Without a current limit the proposer has nothing to compute a bounded change from, and skips.
-  3. **The allocation fits after the fix.** Increases are capped at 2×, so 64Mi becomes at most 128Mi — and ~90 MB fits in 128Mi. One approval heals it.
+  3. **The allocation fits after the fix.** Increases are capped at 2× the live limit, so 64Mi becomes at most 128Mi, and ~90 MB fits in 128Mi. One approval heals it.
 </Warning>
+
+<Note>
+  **This demo heals end to end because nothing reconciles it.** You applied it with `kubectl apply`, so Dorgu records `managedBy: unmanaged` and is free to patch the Deployment.
+
+  On your real apps that is often not the case. For a Deployment that Helm, ArgoCD, Flux, or kustomize owns, Dorgu detects and diagnoses exactly the same but **will not patch it**: it names the owner and tells you what to change in your source of truth instead. Read [the ownership model](/ownership-model) before you point this at anything you deploy with Helm.
+</Note>
 
 ## 4. Watch Dorgu detect and diagnose it
 
@@ -284,8 +290,25 @@ Dorgu only watches workloads that have an `ApplicationPersona`. Without one, a b
     dorgu incidents list -n apps
     dorgu remediation list -n apps
     dorgu remediation diff <remediation-name> -n apps
+    ```
+
+    Read the `Owner:` line in that diff before you approve. On a real cluster most of these apps are deployed by something, and what happens next depends on it.
+  </Step>
+
+  <Step title="Approve, or apply it where the workload lives">
+    **If the diff says `Owner: unmanaged`,** approve and Dorgu heals the Deployment:
+
+    ```bash
     dorgu remediation approve <remediation-name> -n apps
     ```
+
+    **If it names a Helm release, an ArgoCD application, a Flux resource, or a kustomize overlay,** Dorgu will not patch it, and the diff offers `--no-heal` and `reject` rather than `approve`. Patching an owned Deployment claims those fields away from its owner, and the next `helm upgrade` or sync then fails outright rather than quietly reverting. So make the change at the source the plan points you to, then record the decision:
+
+    ```bash
+    dorgu remediation approve <remediation-name> -n apps --no-heal
+    ```
+
+    Running `approve` without `--no-heal` on an owned workload is safe: it writes nothing, prints the owner and the owner-shaped steps, and exits `4`. See [the ownership model](/ownership-model).
   </Step>
 </Steps>
 
@@ -294,6 +317,10 @@ Dorgu only watches workloads that have an `ApplicationPersona`. Without one, a b
 </Note>
 
 `dorgu persona import` requires CLI **v0.9.0** or newer. See [`dorgu persona import`](/cli/commands/persona#persona-import) for every flag.
+
+<Warning>
+  **The ownership guard needs CLI v0.10.0 and operator v0.9.0 together.** The operator records who owns each Deployment in `spec.workloadRef`; the CLI is what refuses to patch an owned one. An older CLI against a v0.9.0 operator ignores the record and patches anyway, which is exactly the `helm upgrade` breakage the guard exists to prevent. Check both with `dorgu version` and `helm list -n dorgu-system`. See [version coupling](/ownership-model#version-coupling).
+</Warning>
 
 ## Also: generate manifests
 
@@ -327,5 +354,11 @@ Dorgu analyzes the app and writes a Deployment, Service, Ingress, HPA, ArgoCD Ap
   </Card>
   <Card title="dorgu health" icon="stethoscope" href="/cli/commands/health">
     The unmonitored section, exit codes, and JSON output
+  </Card>
+  <Card title="Ownership model" icon="user-lock" href="/ownership-model">
+    Which workloads Dorgu patches, which it only recommends for, and why
+  </Card>
+  <Card title="Security and permissions" icon="shield-check" href="/security-and-permissions">
+    The operator's ClusterRole, published in full
   </Card>
 </CardGroup>

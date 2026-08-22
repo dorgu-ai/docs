@@ -14,6 +14,14 @@ import GoInstall from '/snippets/installation-go.mdx';
   **`kubectl` is not optional.** `dorgu health`, `dorgu incidents`, `dorgu remediation`, and `dorgu persona import` all shell out to `kubectl` and read your current context. Without it every cluster command fails with `kubectl not found in PATH`. Only `dorgu generate`, `dorgu init`, and `dorgu config` work without a cluster.
 </Warning>
 
+<Warning>
+  **CLI v0.10.0 pairs with operator v0.9.0.** v0.10.0 refuses to patch a Deployment that Helm, ArgoCD, Flux, or kustomize owns, using the `spec.workloadRef` record the operator writes. That record only exists from **operator v0.9.0**, and an absent record is treated as owned on purpose.
+
+  So **against operator v0.8.1 or older, every remediation carrying a workload change is declined** with exit code `4`. Nothing breaks and nothing is lost: `dorgu remediation approve --no-heal` records the decision and you apply the change yourself. But if you are healing workloads today, upgrade the operator alongside the CLI.
+
+  The reverse mismatch is the one that matters more. **CLI v0.9.0 and older do not read `workloadRef` at all**, so they will still patch an owned Deployment against a v0.9.0 operator, which is exactly what breaks the next `helm upgrade`. See [the ownership model](/ownership-model#version-coupling).
+</Warning>
+
 ## Binary releases (no Go toolchain)
 
 Every release ships pre-built archives on [GitHub Releases](https://github.com/dorgu-ai/dorgu/releases), for Linux, macOS, and Windows on both `amd64` and `arm64`.
@@ -35,7 +43,7 @@ That URL is an unversioned alias that always resolves to the newest release, so 
 To pin an exact release instead:
 
 ```bash
-VERSION=0.9.0
+VERSION=0.10.0
 OS=linux
 ARCH=amd64
 ARCHIVE="dorgu_${VERSION}_${OS}_${ARCH}.tar.gz"
@@ -54,14 +62,14 @@ The archive also contains `README.md`, `LICENSE`, and `.dorgu.yaml.example`; nam
 
 ### Windows
 
-Download `dorgu_windows_amd64.zip` (or `_arm64`) from the [latest release](https://github.com/dorgu-ai/dorgu/releases/latest), extract it, and put `dorgu.exe` somewhere on your `PATH`. The pinned form is `dorgu_0.9.0_windows_amd64.zip`.
+Download `dorgu_windows_amd64.zip` (or `_arm64`) from the [latest release](https://github.com/dorgu-ai/dorgu/releases/latest), extract it, and put `dorgu.exe` somewhere on your `PATH`. The pinned form is `dorgu_0.10.0_windows_amd64.zip`.
 
 ### Verifying the download
 
 Each release publishes `checksums.txt`, which covers the versioned archives:
 
 ```bash
-VERSION=0.9.0
+VERSION=0.10.0
 curl -fLO "https://github.com/dorgu-ai/dorgu/releases/download/v${VERSION}/checksums.txt"
 
 # Linux
@@ -79,11 +87,11 @@ With a Go toolchain, install the latest release:
 Or pin a specific version:
 
 ```bash
-go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.9.0
+go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.10.0
 ```
 
 <Note>
-  `v0.9.0` is the version this page is pinned to. Check [CLI releases](https://github.com/dorgu-ai/dorgu/releases) for the newest, or use `@latest` to always get it.
+  `v0.10.0` is the version this page is pinned to. Check [CLI releases](https://github.com/dorgu-ai/dorgu/releases) for the newest, or use `@latest` to always get it.
 </Note>
 
 Ensure `$GOPATH/bin` (or `$HOME/go/bin`) is in your `PATH`.
@@ -106,8 +114,8 @@ dorgu version
 From a release archive, the commit and build date are stamped in:
 
 ```
-dorgu version v0.9.0
-Build: e8a7352 @ 2026-08-16T17:08:49Z
+dorgu version v0.10.0
+Build: fb43d86 @ 2026-08-22T22:15:06Z
 ```
 
 `go install github.com/dorgu-ai/dorgu/cmd/dorgu@...` cannot set those build flags, so it prints `Build: from source` instead. That is a working install, not a broken one. Building from a clone with `make build` or `make install` does stamp the commit and date.
@@ -120,5 +128,11 @@ Build: e8a7352 @ 2026-08-16T17:08:49Z
   </Card>
   <Card title="Already have apps running?" icon="download" href="/cli/quickstart#brownfield-a-cluster-that-already-has-apps">
     Import personas from your live Deployments so Dorgu can see them.
+  </Card>
+  <Card title="Ownership model" icon="user-lock" href="/ownership-model">
+    Which workloads Dorgu will patch, which it only recommends for, and why.
+  </Card>
+  <Card title="Security and permissions" icon="shield-check" href="/security-and-permissions">
+    The operator's ClusterRole, published in full.
   </Card>
 </CardGroup>

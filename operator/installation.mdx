@@ -25,6 +25,17 @@ That is the canonical install command, and it is the same one used in the [CLI q
   Earlier charts defaulted `healthCheck.enabled` to `false`, which meant following this page produced an operator that detected nothing. If you are reading an older copy of these instructions, that is the difference.
 </Note>
 
+<Warning>
+  **Chart 0.9.0 pairs with CLI v0.10.0. Upgrade both.** As of operator 0.9.0, a remediation for a workload that Helm, ArgoCD, Flux, or kustomize owns is **recommendation only**: the operator records who owns the Deployment in `spec.workloadRef` and shapes the plan as instructions for that owner, rather than a command that writes to the cluster.
+
+  Refusing the patch is the **CLI's** job, so the two versions matter in both directions:
+
+  - **CLI ≤ v0.9.0 against operator 0.9.0** does not read `workloadRef` at all and will still patch an owned Deployment, breaking the owner's next apply. This is the mismatch to avoid.
+  - **CLI v0.10.0 against operator ≤ 0.8.1** sees no `workloadRef`, treats that as owned on purpose, and declines every remediation carrying a workload change (exit code `4`). `dorgu remediation approve --no-heal` is the way through until the operator is upgraded.
+
+  Read [the ownership model](/ownership-model) before you upgrade a cluster that runs Helm or ArgoCD-managed apps. Persona writes are unaffected.
+</Warning>
+
 To turn detection off and run the operator for validation and cluster discovery only:
 
 ```bash
@@ -46,11 +57,11 @@ The command above resolves the newest published chart. To pin an exact version f
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
   --namespace dorgu-system \
   --create-namespace \
-  --version 0.8.0
+  --version 0.9.0
 ```
 
 <Note>
-  `0.8.0` is the chart version this page is pinned to. Check [operator releases](https://github.com/dorgu-ai/dorgu-operator/releases) for the newest.
+  `0.9.0` is the chart version this page is pinned to. Check [operator releases](https://github.com/dorgu-ai/dorgu-operator/releases) for the newest.
 </Note>
 
 ### Install with a values file
@@ -97,7 +108,7 @@ cd dorgu-operator
 make install
 
 # Deploy the operator
-make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.8.0
+make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.9.0
 ```
 
 To uninstall:
@@ -206,6 +217,9 @@ Look for `Phase 2a/2b health check and remediation enabled` with the interval. I
   </Card>
   <Card title="Turn on AI" icon="sparkles" href="/operator/configuration/ai-setup">
     BYO Anthropic key for AI diagnosis and ordered plans
+  </Card>
+  <Card title="Security and permissions" icon="shield-check" href="/security-and-permissions">
+    The operator's full ClusterRole and the verbs it does not have
   </Card>
   <Card title="Configuration" icon="gear" href="/operator/configuration/overview">
     Customize flags and Helm values

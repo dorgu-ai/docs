@@ -1,0 +1,256 @@
+---
+title: "Security and permissions"
+description: "The operator's actual ClusterRole, the verbs it does not have, and why that matters"
+---
+
+Dorgu's central claim is that **the operator never writes your workloads**. This page is the proof rather than the assertion: the operator's full ClusterRole, and an explicit list of what it cannot do.
+
+Read it alongside the [ownership model](/ownership-model). Together they are the whole safety story:
+
+- **The operator cannot write workloads.** It has no `create`, `update`, or `patch` on Deployments. Kubernetes enforces that, not Dorgu's code.
+- **The CLI will not write workloads you have not handed it.** It runs as *you*, so RBAC cannot stop it. What stops it is the ownership guard: it refuses to patch a Deployment that Helm, ArgoCD, Flux, or kustomize reconciles.
+
+One is enforced by the API server. The other is enforced by the CLI. Both are needed, because they defend against different things.
+
+## What the operator cannot do
+
+These are the permissions the ClusterRole does **not** grant. Every one of them fails with a `403 Forbidden` from the API server if the operator ever tried.
+
+| Denied | Why it matters |
+|--------|----------------|
+| `create`, `update`, `patch`, `delete` on **Deployments** | The operator can only `get`, `list`, and `watch` them. It is structurally incapable of changing a running workload, approved remediation or not. |
+| Any verb on **Services**, **StatefulSets**, **DaemonSets**, **Jobs**, **CronJobs**, **Ingresses** | Not in the role at all. There is no rule to grant them. |
+| `get`, `list`, or `watch` on **Secrets** | The operator cannot read a Secret in your cluster. Not yours, and not even its own. See [how the API key reaches it](#how-the-ai-api-key-reaches-the-operator). |
+| Any verb on **ConfigMaps** | Not in the role. |
+| `create`, `update`, `patch`, `delete` on **Pods** | Read-only. It cannot delete a pod to force a restart. |
+| Any verb on **Nodes** beyond `get`, `list`, `watch` | It cannot cordon, drain, or taint a node. |
+| Any verb on **RBAC resources** (`roles`, `clusterroles`, `rolebindings`, `clusterrolebindings`) | It cannot grant itself anything. There is no privilege-escalation path through the operator's own service account. |
+| Any verb on **ArgoCD Applications** unless you set `argocd.enabled=true` | And even then, `get`, `list`, `watch` only. It cannot trigger a sync or edit an Application. |
+
+<Note>
+  **Verify it yourself on any cluster.** `kubectl auth can-i` answers as the operator's service account:
+
+  ```bash
+  SA=system:serviceaccount:dorgu-system:dorgu-operator
+
+  kubectl auth can-i patch deployments  --as="$SA" -A   # no
+  kubectl auth can-i update deployments --as="$SA" -A   # no
+  kubectl auth can-i create deployments --as="$SA" -A   # no
+  kubectl auth can-i delete deployments --as="$SA" -A   # no
+  kubectl auth can-i get    secrets     --as="$SA" -A   # no
+  kubectl auth can-i delete pods        --as="$SA" -A   # no
+  kubectl auth can-i create clusterroles --as="$SA"     # no
+
+  kubectl auth can-i get    deployments --as="$SA" -A   # yes
+  ```
+
+  Adjust the namespace and name if you installed with a different release name or `serviceAccount.name`. The full list is `kubectl auth can-i --list --as="$SA"`.
+</Note>
+
+## What the operator can do
+
+Everything the operator is permitted to do falls into three buckets: **read cluster state**, **write its own CRDs**, and **record events**.
+
+| Resource | Verbs | Why |
+|----------|-------|-----|
+| `applicationpersonas.dorgu.io` | get, list, watch, create, update, patch, delete | Reconcile personas. The `spec` is only ever patched via a human-approved `RemediationAction`. |
+| `applicationpersonas/status` | get, update, patch | Validation results, health, resource baselines, ArgoCD sync state. |
+| `clusterpersonas.dorgu.io` | get, list, watch, create, update, patch, delete | Auto-create and reconcile the singleton `dorgu-cluster`. |
+| `clusterpersonas/status` | get, update, patch | Discovered nodes, add-ons, capacity, saturation. |
+| `incidentmemories.dorgu.io` | get, list, watch, create, update, patch | Open and update incident records. **No `delete`.** |
+| `incidentmemories/status` | get, update, patch | Resolution outcome and duration. |
+| `remediationactions.dorgu.io` | get, list, watch, create, update, patch | Propose fixes and record their lifecycle. **No `delete`.** |
+| `remediationactions/status` | get, update, patch | Phase transitions and verification results. |
+| `dorguevents.dorgu.io` | create, get, list, watch | The classified-event pipeline. Write-once records: **no `update`, no `delete`.** |
+| `apps/deployments`, `apps/replicasets` | **get, list, watch** | Persona validation, ownership detection, and pod-to-ReplicaSet-to-Deployment correlation. **Read-only.** |
+| `pods`, `namespaces`, `nodes` | get, list, watch | Detection signals and cluster discovery. **Read-only.** |
+| `events` | get, list, watch, create, patch | List and watch for the event pipeline; create and patch to record Dorgu's own Kubernetes Events. |
+| `metrics.k8s.io/pods` | get, list | Container-level usage and saturation signals. Requires metrics-server; optional. |
+| `coordination.k8s.io/leases` | get, list, watch, create, update, patch, delete | Leader election, when `leaderElection.enabled=true`. |
+| `argoproj.io/applications` | get, list, watch | **Only when `argocd.enabled=true`.** Sync and health status tracking. |
+
+Note the shape of it. Every write verb in that table targets a `dorgu.io` CRD, a Kubernetes `Event`, or a leader-election `Lease`. Nothing else in the cluster is writable.
+
+## The full ClusterRole
+
+This is `charts/dorgu-operator/templates/rbac.yaml` as it ships, rendered with `argocd.enabled=true` so the optional rule is visible. Read your own cluster's copy with `kubectl get clusterrole dorgu-operator-manager -o yaml`.
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dorgu-operator-manager
+rules:
+  # ApplicationPersona CRD (namespaced; controller reconciles and updates status)
+  - apiGroups: ["dorgu.io"]
+    resources: ["applicationpersonas"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["dorgu.io"]
+    resources: ["applicationpersonas/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["dorgu.io"]
+    resources: ["applicationpersonas/finalizers"]
+    verbs: ["update"]
+
+  # ClusterPersona CRD (cluster-scoped; controller reconciles and updates status)
+  - apiGroups: ["dorgu.io"]
+    resources: ["clusterpersonas"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["dorgu.io"]
+    resources: ["clusterpersonas/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["dorgu.io"]
+    resources: ["clusterpersonas/finalizers"]
+    verbs: ["update"]
+
+  # IncidentMemory CRD (created by healthcheck reconciler; status updated by incident controller)
+  - apiGroups: ["dorgu.io"]
+    resources: ["incidentmemories"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["dorgu.io"]
+    resources: ["incidentmemories/status"]
+    verbs: ["get", "update", "patch"]
+
+  # RemediationAction CRD (created by proposer; lifecycle managed by remediation controller)
+  - apiGroups: ["dorgu.io"]
+    resources: ["remediationactions"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["dorgu.io"]
+    resources: ["remediationactions/status"]
+    verbs: ["get", "update", "patch"]
+
+  # DorguEvent CRD (event pipeline)
+  - apiGroups: ["dorgu.io"]
+    resources: ["dorguevents"]
+    verbs: ["create", "get", "list", "watch"]
+
+  # Deployments + ReplicaSets (read-only; ApplicationPersona validation and
+  # pod->ReplicaSet->Deployment ownership correlation)
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+
+  # ArgoCD Applications (only when argocd.enabled; watcher registered only if CRD exists)
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list", "watch"]
+
+  # Pods, namespaces, nodes (ClusterPersona discovery; read-only)
+  - apiGroups: [""]
+    resources: ["pods", "namespaces", "nodes"]
+    verbs: ["get", "list", "watch"]
+
+  # Events (recording controller events + the event watcher's list/watch)
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+
+  # Pod metrics (metrics-usage-checker; requires metrics-server)
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+
+  # Leases (leader election when leaderElection.enabled=true)
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+```
+
+<Note>
+  **The `apps` rule is the one to read twice.** `verbs: ["get", "list", "watch"]` on `deployments` is what makes "the operator never writes workloads" a fact about your API server rather than a promise about Dorgu's source code. Even a bug, a malicious plan from the AI planner, or a compromised operator pod cannot patch a Deployment through this service account.
+</Note>
+
+## How the AI API key reaches the operator
+
+The operator has **no permission to read Secrets**, which raises a fair question: how does it get your Anthropic key?
+
+The key is injected as an environment variable via `secretKeyRef` in the pod spec. The **kubelet** reads the Secret and materialises it into the container's environment; the operator's ServiceAccount is never involved and never needs `get secrets`.
+
+```yaml
+# rendered into the operator Deployment
+env:
+  - name: ANTHROPIC_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: dorgu-llm
+        key: ANTHROPIC_API_KEY
+```
+
+The practical consequences:
+
+- The operator can read exactly **one** secret value, the one you explicitly wired into its pod spec. It cannot enumerate or read any other Secret in the cluster.
+- Rotating the key means updating the Secret and restarting the pod. There is no live re-read, because there is no read.
+- In production, create the Secret out of band and set `llm.existingSecret`. Passing `llm.apiKey` through Helm values means the raw key stays visible to `helm get values` and `helm template`.
+
+<Warning>
+  **AI is opt-in, and it sends cluster context to Anthropic.** Detection and rule-based diagnosis are local and free, so they are on by default. AI diagnosis and AI-written plans require `llm.provider`, a key, and `aiRemediation.enabled` set explicitly. A default install spends nothing on inference and sends nothing anywhere. See [AI setup](/operator/configuration/ai-setup) for exactly what is included in a prompt.
+</Warning>
+
+## What the CLI can do, and with whose credentials
+
+The CLI is the other half of the story, and its permissions are not Dorgu's to grant.
+
+`dorgu` shells out to `kubectl` using **your** kubeconfig and your current context. It has exactly the access you have. If you can patch a Deployment, so can it; RBAC will never stop the CLI on your behalf.
+
+That is why the ownership guard is in the CLI rather than in RBAC. It is not a permission boundary, it is a judgment about whether writing is *correct*:
+
+| Write | Actor | Credentials | What stops it |
+|-------|-------|-------------|---------------|
+| Persona `spec` patch, on an approved remediation | Operator | Operator ServiceAccount | Requires an approved `RemediationAction`; scoped to the reviewed fields |
+| Persona / Incident / Remediation `status` | Operator | Operator ServiceAccount | Nothing. These are Dorgu's own records. |
+| **Deployment patch** | **CLI** | **Yours** | The [ownership guard](/ownership-model): declined unless `managedBy: unmanaged` |
+| Anything else on a workload | Nobody | n/a | The operator has no RBAC for it; the CLI never attempts it |
+
+<Warning>
+  **The ownership guard is enforced by CLI v0.10.0 or newer.** Operator v0.9.0 supplies the facts in `spec.workloadRef` and strips workload-writing commands, but refusing the patch is the CLI's job. An older CLI against a v0.9.0 operator will still patch an owned Deployment. See [version coupling](/ownership-model#version-coupling).
+</Warning>
+
+## Guardrails on the remediation path
+
+RBAC bounds what is *possible*. These bound what Dorgu will *propose*, and they run before any `RemediationAction` is created.
+
+| Guardrail | Limit |
+|-----------|-------|
+| Human approval | **Required by default.** Every proposal is created with `approval.required: true` and phase `Pending`. |
+| Blast radius | Resource increases capped at **2×** the **live** container value; decreases capped at 50% |
+| No new keys | A remediation may only change a resource key the workload already sets. Approving a memory fix cannot silently add a CPU limit. |
+| Rate limit | 5 remediations per persona per hour |
+| Concurrency | One active remediation per persona |
+| Failure cooldown | 30 minutes after a `Failed` remediation for the same persona |
+| Namespace deny list | `kube-system` and `dorgu-operator-system` always, plus `policies.selfHealing.excludeNamespaces` |
+| Auto-executable steps | Only `persona-update` steps may be `autoExecutable`, enforced by a **CEL validation rule on the CRD** at the API server. No plan can escalate itself. |
+| Step commands | Sanitized before storage and re-checked before display: single line, must start with `kubectl `, no shell metacharacters, bounded length. **Never executed**, by the operator or the CLI. |
+| Rollback | Automatic. The operator restores `prePatchState` when verification finds health degraded. |
+
+<Warning>
+  **`trustLevel`, `policies.selfHealing.enabled`, and `approval.autoApproveRule` are descriptive, not enforced.** `trustLevel` is only passed to the AI planner as context, detection and proposal run regardless of `enabled` (use `mode: observe` to stop at diagnosis), and no controller reads `autoApproveRule`. **Every remediation requires human approval.** `maxRemediationsPerHour` and `excludeNamespaces` *are* enforced. We would rather you knew.
+</Warning>
+
+## Hardening notes
+
+| Concern | Where it stands |
+|---------|-----------------|
+| Cluster-scoped role | The operator uses a `ClusterRole`, because `ClusterPersona` discovery reads nodes and namespaces cluster-wide and personas can live in any namespace. Every cluster-wide grant on a non-`dorgu.io` resource is read-only. |
+| Namespace scoping | Not currently supported. Restricting the operator to a namespace list is not yet a chart option. |
+| Admission webhook | **Off by default** (`webhook.enabled: false`). In `advisory` mode it only warns; `enforcing` mode can reject Deployments that violate their persona. Turn it on deliberately, and run one cycle in `advisory` first. |
+| Metrics endpoint | The chart always renders `--metrics-secure=true`, so metrics are served over HTTPS with RBAC-protected authn and authz. There is no value that turns that off. |
+| Egress | Only needed for the Anthropic API, and only when AI is enabled. A default install makes no outbound calls. |
+| Image provenance | Published to `ghcr.io/dorgu-ai/dorgu-operator`; the Helm chart is an OCI artifact at `ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator`. |
+| Reporting a vulnerability | Open a security advisory on [dorgu-ai/dorgu-operator](https://github.com/dorgu-ai/dorgu-operator/security/advisories) rather than a public issue. |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Ownership model" icon="user-lock" href="/ownership-model">
+    Why Dorgu refuses to patch a Helm or ArgoCD-owned workload
+  </Card>
+  <Card title="Trust model" icon="user-check" href="/cli/architecture/trust-model">
+    The progressive trust levels and what is actually implemented
+  </Card>
+  <Card title="Helm values" icon="gear" href="/operator/configuration/helm-values">
+    Every chart option, including webhook mode and leader election
+  </Card>
+  <Card title="AI setup" icon="sparkles" href="/operator/configuration/ai-setup">
+    Key handling, what is sent to Anthropic, and how to turn it off
+  </Card>
+</CardGroup>

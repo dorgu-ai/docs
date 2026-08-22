@@ -1,0 +1,326 @@
+---
+title: "Ownership model"
+description: "Dorgu understands your whole cluster. It only changes the workloads you have handed it."
+---
+
+Dorgu understands your whole cluster. It only *changes* what you have explicitly handed it.
+
+For a Deployment that Helm, ArgoCD, Flux, or kustomize reconciles, Dorgu is **understanding and recommendation only**. It still detects the failure, still diagnoses the root cause, and still tells you exactly which value to change. It will **not** patch the Deployment. Instead it names the owner and shapes the fix as an instruction for that owner's source of truth.
+
+<Note>
+  **Version requirement.** The ownership record ships in **operator v0.9.0**; the refusal is enforced by **CLI v0.10.0**. They are a matched pair. See [version coupling](#version-coupling) before you upgrade one without the other.
+</Note>
+
+## Why Dorgu refuses
+
+Patching an owned Deployment does not merely get reverted. It breaks the owner's *next* deploy.
+
+Under server-side apply, the field manager that last set a field owns it. When the Dorgu CLI patches `resources.limits.memory` on a Deployment that Helm installed, that patch claims the field away from Helm's field manager. The fix works, the pod recovers, and everything looks fine. Then someone runs `helm upgrade` and it **hard-fails on a field-manager conflict**, because Helm still believes it owns a field it no longer does.
+
+A fix that breaks your next deploy is not a fix. Clean-room testing hit exactly that failure: Dorgu healed a Helm-managed app, printed a green checkmark, and left the release un-upgradable.
+
+The failure mode differs by owner, and none of them are good:
+
+| Owner | What a direct patch does |
+|-------|--------------------------|
+| Helm | Claims the fields away from Helm's field manager. The next `helm upgrade` fails outright with a field-manager conflict. |
+| ArgoCD | Reverted on the next sync, or rejected outright under server-side apply. |
+| Flux | Reverted the next time Flux reconciles the Deployment. |
+| kustomize | Overwritten the next time the overlay is applied. |
+| unknown | An unseen owner is still an owner. A patch that collides with one breaks their next deploy. |
+
+## `spec.workloadRef`
+
+At proposal time the operator reads the **live** Deployment and records what it found on `RemediationAction.spec.workloadRef`:
+
+```yaml
+spec:
+  workloadRef:
+    kind: Deployment
+    name: frontend-podinfo          # the workload's name, not the persona's
+    namespace: apps
+    container: podinfo              # the container whose resources were read
+    managedBy: helm
+    managedByDetail: 'Helm release "frontend" in namespace apps'
+    observedResources:
+      limits:
+        memory: 32Mi
+        cpu: ""                     # empty means the workload does not set it
+      requests:
+        memory: 16Mi
+        cpu: 50m
+    observedImage: ghcr.io/stefanprodan/podinfo:6.14.1
+    observedAt: "2026-08-23T09:14:02Z"
+```
+
+| Field | Meaning |
+|-------|---------|
+| `kind` | The workload kind. Only `Deployment` is resolved today. |
+| `name` | The live Deployment's `metadata.name`. On a brownfield cluster this is usually **not** the persona name: persona `frontend` resolves to Deployment `frontend-podinfo`. |
+| `namespace` | The Deployment's namespace. |
+| `container` | The container whose resources were observed, and the one a fix would target. |
+| `managedBy` | One of `helm`, `argocd`, `flux`, `kustomize`, `unmanaged`, `unknown`. Defaults to `unknown`. |
+| `managedByDetail` | The specific owner in prose, so a refusal can name what owns the workload rather than saying that something does. |
+| `observedResources` | The live container's `requests` and `limits`. An **empty string means the workload does not set that key**, which is a different fact from a value of zero. |
+| `observedImage` | The container's live image reference including its tag. The only image Dorgu has actually read. |
+| `observedAt` | When the live workload was read. |
+
+<Note>
+  `workloadRef` is also what grounds every number Dorgu states. The `ApplicationPersona` is a point-in-time import that drifts from the running Deployment, so quoting persona values as current reality is how Dorgu once claimed a 96Mi limit on a container that had 32Mi. Facts, blast-radius caps, and diffs all come from `observedResources` now.
+</Note>
+
+## How ownership is detected
+
+The operator reads server-side-apply field managers plus labels and annotations, **most specific owner first**, because owners layer on top of each other. A Flux `HelmRelease` renders Helm's own labels, so Flux has to win; an ArgoCD-managed Helm chart likewise carries Helm metadata that ArgoCD, not Helm, actually reconciles.
+
+| Order | `managedBy` | Evidence |
+|-------|-------------|----------|
+| 1 | `argocd` | `argocd.argoproj.io/tracking-id` annotation, `argocd.argoproj.io/instance` label, or the `argocd-controller` / `argocd-application-controller` field manager |
+| 2 | `flux` | `kustomize.toolkit.fluxcd.io/name` or `helm.toolkit.fluxcd.io/name` label, or the `kustomize-controller` / `helm-controller` field manager |
+| 3 | `helm` | `meta.helm.sh/release-name` annotation, `app.kubernetes.io/managed-by: Helm`, or the `helm` field manager |
+| 4 | `kustomize` | `app.kubernetes.io/managed-by: kustomize` |
+| 5 | `unknown` | Some other manager owns fields through **server-side apply** and Dorgu does not recognise it. `managedByDetail` names it. |
+| 6 | `unmanaged` | None of the above. Nothing reconciles this workload. |
+
+Two details are worth knowing:
+
+- **Only `Apply`-operation field managers count as ownership.** `kubectl patch` and `kubectl set` leave an `Update`-operation entry, which claims no ongoing ownership of the fields, so it says nothing about whether a future patch will conflict. A Deployment only ever touched by `kubectl` therefore reads as `unmanaged`, which is the one state where patching is safe.
+- **A Flux `HelmRelease` reads as `flux`, not `helm`,** because Flux is what reconciles it. Editing chart values without going through the Flux source would get reverted.
+
+<Warning>
+  **`unknown` is treated as owned.** Where the Deployment cannot be resolved, or its server-side applier is not one Dorgu recognises, `managedBy` is `unknown` and Dorgu explains rather than writes. Absence of evidence that patching is safe is not evidence that it is, and nothing is patched on a guess.
+
+  One consequence worth knowing: a workload the operator cannot resolve also loses its advisory `kubectl` commands, so a resolution failure costs plan usefulness as well as grounding.
+</Warning>
+
+## What changes about the plan
+
+For an owned Deployment, the operator rewrites every step whose command would write to the cluster. The command is dropped, the description becomes what to change **at the source**, and the step's rationale gains one line on what a direct patch would have broken.
+
+<Tabs>
+  <Tab title="Helm">
+    ```
+    [1] Set resources.limits.memory: 128Mi in the values for Helm release
+        "frontend" in namespace apps (the key is chart-specific, commonly
+        under `resources`), then run your usual `helm upgrade` for that release.
+        A direct patch would claim the fields it sets away from Helm release
+        "frontend" in namespace apps, and your next helm upgrade would then
+        fail with a field-manager conflict.
+    ```
+
+    The chart values key is hedged deliberately. Dorgu has not read your chart, so it says "commonly under `resources`" rather than asserting a path it cannot verify.
+  </Tab>
+  <Tab title="ArgoCD">
+    ```
+    [1] Set resources.limits.memory: 128Mi in the Git manifests for ArgoCD
+        application "frontend", then commit and let ArgoCD sync.
+        A direct patch would be reverted on the next sync by ArgoCD
+        application "frontend", or rejected outright under server-side apply.
+    ```
+  </Tab>
+  <Tab title="Flux">
+    ```
+    [1] Set resources.limits.memory: 128Mi in the Git source reconciled by
+        Flux HelmRelease "frontend", then commit and let Flux reconcile it.
+        A direct patch would be reverted the next time Flux HelmRelease
+        "frontend" reconciles this Deployment.
+    ```
+  </Tab>
+  <Tab title="unmanaged">
+    ```
+    [2] workload-apply (low; advisory): Correct the mistyped image tag
+        nginx:1.27-alpineX does not exist; the published tag is nginx:1.27-alpine
+        Run: kubectl set image deployment/web web=nginx:1.27-alpine -n demo
+    ```
+
+    An `unmanaged` workload keeps its direct `kubectl` command exactly as planned. This is the only case where Dorgu hands you a command that writes.
+  </Tab>
+</Tabs>
+
+### Read-only commands survive
+
+On an owned workload, a step's `Run:` line is kept when the command only reads:
+
+```
+[2] manual (low; advisory): Check the container's recent memory pattern
+    Run: kubectl logs deployment/frontend-podinfo -n apps --previous
+```
+
+`kubectl logs`, `kubectl get events`, `kubectl describe`, `kubectl top`, `kubectl rollout status` and the rest of the read-only verbs are printed unchanged, because reading matters *most* on exactly the workloads Dorgu will not patch. It is what is left to hand over.
+
+Classification is positive, not inferred: read-only verbs are listed explicitly, and anything unrecognised is refused rather than assumed harmless. That includes a bare `kubectl rollout` with no subcommand. The verb is found by scanning for the first token that is a known kubectl subcommand, so `kubectl -n apps patch ...` cannot hide `patch` behind a flag argument.
+
+<Note>
+  The operator strips workload-writing commands before it persists the object, and the CLI checks read-only-ness **again** before printing. The duplication is deliberate: the command field is model-authored, and the CLI reads `RemediationAction` objects straight out of the cluster, where an older operator or anything with permission to create the CRD could have put a `kubectl patch` in there.
+</Note>
+
+## What you see at the CLI
+
+`dorgu remediation diff` names the workload and its owner in the header, and diffs **workload against workload** rather than persona against persona:
+
+```
+Remediation: fix-oom-frontend
+════════════════════════════
+
+Target:     ApplicationPersona/frontend (apps)
+Workload:   Deployment apps/frontend-podinfo (container podinfo)
+Owner:      Helm release "frontend" in namespace apps
+Type:       persona-update
+Confidence: 0.85
+Plan:       ai-anthropic
+Phase:      Pending
+Incident:   im-oom-frontend
+
+...
+
+Deployment change (apps/frontend-podinfo, container podinfo):
+  resources.limits.memory  32Mi -> 128Mi
+
+Dorgu will not patch this Deployment: Helm release "frontend" in namespace apps owns it.
+Make the change in the values for Helm release "frontend" in namespace apps (the key is
+chart-specific, commonly under `resources`), then run your usual helm upgrade.
+
+Actions:
+  dorgu remediation approve fix-oom-frontend -n apps --no-heal   (record the decision, patch no workload)
+  dorgu remediation reject fix-oom-frontend -n apps --reason "..."
+```
+
+Two things to notice. The `Owner:` line is there on unmanaged workloads too, reading `unmanaged (nothing reconciles it, so Dorgu may patch it)`, so you never have to infer which mode you are in. And the suggested action is **not** `approve`: printing a command that will be declined is how a guard that is working reads as a guard that is broken.
+
+### The refusal
+
+If you run `approve` or `heal` on an owned workload anyway, you get the refusal rather than a patch:
+
+```
+Dorgu will not patch this workload.
+
+  Workload: Deployment apps/frontend-podinfo (container podinfo)
+  Owner:    Helm release "frontend" in namespace apps
+
+  A direct patch would claim the fields it sets away from Helm release "frontend"
+  in namespace apps, and your next helm upgrade would then fail with a
+  field-manager conflict.
+
+Deployment change (apps/frontend-podinfo, container podinfo):
+  resources.limits.memory  32Mi -> 128Mi
+
+Apply it where this workload's desired state lives:
+  [1] Set resources.limits.memory: 128Mi in the values for Helm release "frontend"
+      in namespace apps (the key is chart-specific, commonly under `resources`),
+      then run your usual helm upgrade for that release.
+
+Nothing was approved and nothing in the cluster was changed.
+To record the decision without a workload patch: dorgu remediation approve fix-oom-frontend -n apps --no-heal
+```
+
+**Approval is withheld along with the patch.** The gate sits in the preflight, ahead of any write, so on an owned workload `approve` writes nothing at all: no Deployment patch and no status patch. That is deliberate. Approving is what tells the operator to patch the persona and start the verification clock, so approving a change the CLI will not apply would leave the persona at 128Mi, the workload at 32Mi, and a ten-minute verification window running over a fix that was never coming.
+
+## Exit code 4: declined by design
+
+A refusal exits **`4`** (`ExitDeclined`), not `1`.
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | Failure: the command could not run |
+| `4` | **Declined.** Dorgu understood the request, could see exactly what to do, and chose not to write, because the workload belongs to somebody else. Nothing failed and nothing changed. |
+
+The command ran, the plan was understood, and the decision was not to write. A script should be able to tell that apart from breakage.
+
+<Warning>
+  **Any wrapper that treats every non-zero exit as breakage will now report a successful refusal as an error.** Update it to accept `4`, or use `--no-heal` (which exits `0`) where you want the decision recorded without a workload patch.
+</Warning>
+
+## Recording the decision: `--no-heal`
+
+`--no-heal` is how you say "I have read this, I agree, and I will apply it myself":
+
+```bash
+dorgu remediation approve fix-oom-frontend -n apps --no-heal
+```
+
+It records `phase: Approved` on the `RemediationAction`, lets the operator patch the `ApplicationPersona` spec, and skips the Deployment patch entirely. Exit code `0`.
+
+<Note>
+  The CLI warns that the persona and the running workload will disagree until you apply the change at the source. That warning is accurate and worth heeding: the operator's verification window will run against a workload that has not changed yet.
+
+  If you manage personas through GitOps, the persona patch will also show as drift on your next sync. Mirror it back into your repo so your pipeline does not revert it.
+</Note>
+
+## `--workload` no longer redirects the patch
+
+`--workload` still resolves the Deployment, but it must **agree with the one recorded in `spec.workloadRef`**. A mismatch is refused:
+
+```
+refusing to patch Deployment frontend-canary: Dorgu checked ownership for
+frontend-podinfo, and a decision about one workload does not carry to another
+```
+
+Ownership is a fact about one specific object. A flag that aims the patch at a Deployment the operator never observed is the guard with a hole in it: Dorgu would clear `frontend` as unmanaged and then write to `frontend-canary`, which Helm owns.
+
+<Note>
+  **`--container` still overrides freely,** because ownership is per-Deployment, not per-container. When `--container` is omitted, the container the operator actually read is used, so the patch targets the same container whose values were the diff's before-state.
+</Note>
+
+## What is *not* gated
+
+Ownership governs one thing: the CLI patching your Deployment. Everything else is unchanged.
+
+| Write | Actor | Gated on ownership? |
+|-------|-------|---------------------|
+| `persona-update` step patches the `ApplicationPersona` spec | Operator | **No.** Always safe, and `autoExecutable` semantics are unchanged. |
+| `RemediationAction` / `IncidentMemory` / `DorguEvent` records | Operator | **No.** These are Dorgu's own CRDs. |
+| Deployment patch on approval or heal | CLI, with **your** credentials | **Yes.** Only `managedBy: unmanaged` permits it. |
+
+Detection, diagnosis, proposal, guardrails, verification, and incident memory all run identically on owned and unmanaged workloads. The operator [could not write your workloads if it wanted to](/security-and-permissions): its ClusterRole grants no `create`, `update`, or `patch` on Deployments.
+
+## Version coupling
+
+CLI v0.10.0 and operator v0.9.0 are a **matched pair**. A missing `workloadRef` is deliberately treated as owned, which makes both mismatch directions predictable rather than silent.
+
+| Combination | What happens |
+|-------------|--------------|
+| **CLI v0.10.0 + operator v0.9.0** | Correct. Owned workloads are declined with owner-shaped steps; unmanaged ones are patched as before. |
+| **CLI v0.10.0 + operator ≤ v0.8.1** | The operator never writes `workloadRef`, and an absent record means either an operator too old to know or a workload that could not be read. So **every remediation carrying a workload change is declined**, exit `4`. Advisory-only remediations are unaffected, since there is no workload change to refuse. Use `--no-heal` to record decisions and apply changes yourself, or upgrade the operator. |
+| **CLI ≤ v0.9.0 + operator v0.9.0** | **The guard does not apply.** Older CLIs do not read `workloadRef` at all, so `approve` will still patch an owned Deployment and break the owner's next apply. The operator supplies the facts; refusing the patch is the CLI's job. Upgrade the CLI. |
+
+<Warning>
+  Of the two mismatches, **CLI ≤ v0.9.0 against operator v0.9.0 is the dangerous one**. The other direction is merely conservative: it declines things it could have patched. This one silently does the thing the guard exists to prevent.
+</Warning>
+
+## Trying it
+
+The [greenfield quickstart](/cli/quickstart) heals end to end, because its demo app is applied with `kubectl apply` and is therefore `unmanaged`. To see the ownership path instead, point Dorgu at anything you installed with Helm and break it:
+
+```bash
+# Any Helm release will do. Import a persona so Dorgu can see it.
+dorgu persona import -n apps --all --apply
+
+# Give one of them a limit it cannot live within
+kubectl -n apps set resources deploy/<deployment> --limits=memory=32Mi
+
+# One detection cycle later
+dorgu remediation list -n apps
+dorgu remediation diff <remediation-name> -n apps
+```
+
+The diff names the Helm release, shows the Deployment change, and offers `--no-heal` and `reject` instead of `approve`. Apply the fix through Helm using whatever values key that chart exposes, then run your usual `helm upgrade`.
+
+That `helm upgrade` succeeding afterwards is the whole point.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Security and permissions" icon="shield-check" href="/security-and-permissions">
+    The operator's actual ClusterRole, and the verbs it does not have
+  </Card>
+  <Card title="Self-healing" icon="heart-pulse" href="/operator/features/self-healing">
+    Detection, diagnosis, guardrails, and verification
+  </Card>
+  <Card title="dorgu remediation" icon="terminal" href="/cli/commands/remediation">
+    Every flag for diff, approve, reject, and heal
+  </Card>
+  <Card title="Trust model" icon="user-check" href="/cli/architecture/trust-model">
+    Where ownership sits in the progressive trust levels
+  </Card>
+</CardGroup>

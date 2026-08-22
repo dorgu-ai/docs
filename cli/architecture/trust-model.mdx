@@ -24,7 +24,7 @@ Dorgu implements **Levels 0 through 2**. Levels 3 through 5 are planned.
 - Analyzes application source code and generates Kubernetes manifests
 - Produces ApplicationPersona CRDs that describe the desired operational profile
 - Proposes changes by generating files that a human reviews, commits, and deploys through existing GitOps workflows
-- **Applies an approved remediation to the running workload.** When you run `dorgu remediation approve`, the CLI translates the fix you reviewed into a Deployment patch and applies it with your credentials — after showing you the exact namespace, Deployment, container, and fields, and asking for confirmation
+- **Applies an approved remediation to the running workload, when that workload is Dorgu's to change.** When you run `dorgu remediation approve`, the CLI translates the fix you reviewed into a Deployment patch and applies it with your credentials, after showing you the exact namespace, Deployment, container, and fields, and asking for confirmation. If something else reconciles that Deployment, it declines instead and hands you the owner-shaped steps (see [ownership](#ownership-is-a-second-axis))
 
 **Operator (Level 0-2: OBSERVE / RECOMMEND / PROPOSE)**
 - Observes cluster state by watching Deployments, Pods, Nodes, and integration resources (ArgoCD, Prometheus)
@@ -59,11 +59,29 @@ The healing loop is what Level 2 looks like end to end:
   **Auto-approve graduation is not implemented.** `policies.selfHealing.mode` on the `ClusterPersona` decides how far the loop goes on its own — `observe` proposes nothing, `propose` (the default) proposes and waits — but `auto-approve` is accepted only for forward compatibility: the operator logs a warning and treats it as `propose`. `trustLevel` (0–5) and `RemediationAction`'s `approval.autoApproveRule` are ignored entirely. **Every remediation waits for a human**, whatever the mode or trust level says. `maxRemediationsPerHour` and `excludeNamespaces` on that same policy *are* enforced.
 </Note>
 
+## Ownership is a second axis
+
+Trust level answers *how much autonomy has Dorgu earned*. It is not the only question. The other one is *whose workload is this*, and the answer does not depend on trust at all.
+
+A Deployment that Helm, ArgoCD, Flux, or kustomize reconciles already has an owner, and that owner's next apply is what has to carry any fix. So for those workloads Dorgu is **understanding and recommendation only**, at every trust level. It detects, diagnoses, and tells you exactly what to change in your source of truth, and it does not patch the Deployment. There is no override flag.
+
+| | Detect and diagnose | Propose a plan | CLI patches the Deployment |
+|---|---|---|---|
+| `managedBy: unmanaged` | Yes | Yes | **Yes**, with your credentials and your confirmation |
+| Owned by Helm, ArgoCD, Flux, kustomize | Yes | Yes, shaped for that owner | No |
+| `managedBy: unknown` | Yes | Yes | No. Unknown is treated as owned. |
+
+This is not a limitation grafted onto the trust model; it is the trust model applied honestly. Level 2 says "propose, a human approves". A workload owned by Helm has *already* delegated its desired state to a pipeline, and writing around that pipeline is not something a per-remediation approval can make correct: the fix works, and the owner's next deploy fails on a field-manager conflict.
+
+See [the ownership model](/ownership-model) for how ownership is detected, exit code `4`, and what the refusal looks like.
+
 ## Non-Negotiable Invariant
 
 <Warning>
 The Dorgu Operator **never** creates or modifies Deployments, Services, or other workload resources. This is a foundational design constraint, not a configuration option.
 </Warning>
+
+And it is enforced by Kubernetes rather than by Dorgu's own code. The operator's ClusterRole grants `get`, `list`, `watch` on `apps/deployments` and nothing more, and no access to Secrets at all. A bug, a malicious AI-written plan, or a compromised operator pod still cannot patch a Deployment through that service account. The role is [published in full](/security-and-permissions), with the denied verbs called out and a `kubectl auth can-i` recipe to check it on your own cluster.
 
 The Operator is permitted to:
 
@@ -80,6 +98,13 @@ The Operator is **not** permitted to:
 - Modify any workload resource in any way
 
 Deployment remains the responsibility of your existing tools: ArgoCD, Flux, Helm, kubectl, or whatever you use today. Dorgu adds observability and guardrails on top of your existing workflow without replacing any part of it.
+
+The two halves of that guarantee are enforced in different places, and both are needed:
+
+| Guarantee | Enforced by | Defends against |
+|-----------|-------------|-----------------|
+| The operator cannot write workloads | **Kubernetes RBAC.** No `create`, `update`, or `patch` on Deployments. | A bug, an AI-written plan that overreaches, or a compromised operator pod |
+| The CLI will not write workloads you have not handed it | **The CLI's ownership guard.** `dorgu` runs as you, so RBAC cannot stop it. | Breaking your deployment tool's next apply |
 
 ## Why Progressive Trust
 
