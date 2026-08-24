@@ -26,7 +26,7 @@ That is the canonical install command, and it is the same one used in the [CLI q
 </Note>
 
 <Warning>
-  **Chart 0.9.0 pairs with CLI v0.10.0. Upgrade both.** As of operator 0.9.0, a remediation for a workload that Helm, ArgoCD, Flux, or kustomize owns is **recommendation only**: the operator records who owns the Deployment in `spec.workloadRef` and shapes the plan as instructions for that owner, rather than a command that writes to the cluster.
+  **Chart 0.9.0 pairs with CLI v0.10.0. Upgrade both.** As of operator 0.9.0, a remediation for a workload that Helm, ArgoCD, or Flux owns is **recommendation only**: the operator records who owns the Deployment in `spec.workloadRef` and shapes the plan as instructions for that owner, rather than a command that writes to the cluster.
 
   Refusing the patch is the **CLI's** job, so the two versions matter in both directions:
 

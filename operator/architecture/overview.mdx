@@ -133,7 +133,7 @@ Every write verb the operator holds targets a `dorgu.io` CRD, a Kubernetes `Even
 | `clusterpersonas` (+ `/status`, `/finalizers`) | get, list, watch, create, update, patch, delete | Auto-create and reconcile the singleton `dorgu-cluster` |
 | `incidentmemories` (+ `/status`) | get, list, watch, create, update, patch | Open and update incident records. No `delete`. |
 | `remediationactions` (+ `/status`) | get, list, watch, create, update, patch | Propose fixes and record their lifecycle. No `delete`. |
-| `dorguevents` | create, get, list, watch | Write-once classified events. No `update`, no `delete`. |
+| `dorguevents` | create, get, list, watch, delete | Write-once classified events (no `update`). `delete` is the retention cleaner pruning Dorgu's own records: [why it is there](/security-and-permissions#why-the-operator-can-delete-dorguevents). |
 | `apps/deployments`, `apps/replicasets` | **get, list, watch** | Persona validation, ownership detection, pod-to-Deployment correlation |
 | `pods`, `namespaces`, `nodes` | get, list, watch | Detection signals and cluster discovery |
 | `events` | get, list, watch, create, patch | The event watcher, plus recording Dorgu's own Kubernetes Events |

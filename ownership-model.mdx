@@ -5,10 +5,21 @@ description: "Dorgu understands your whole cluster. It only changes the workload
 
 Dorgu understands your whole cluster. It only *changes* what you have explicitly handed it.
 
-For a Deployment that Helm, ArgoCD, Flux, or kustomize reconciles, Dorgu is **understanding and recommendation only**. It still detects the failure, still diagnoses the root cause, and still tells you exactly which value to change. It will **not** patch the Deployment. Instead it names the owner and shapes the fix as an instruction for that owner's source of truth.
+For a Deployment that Helm, ArgoCD, or Flux reconciles, Dorgu is **understanding and recommendation only**. It still detects the failure, still diagnoses the root cause, and still tells you exactly which value to change. It will **not** patch the Deployment. Instead it names the owner and shapes the fix as an instruction for that owner's source of truth.
+
+Those three are named deliberately. All three run a controller and stamp what they reconcile, so their ownership is a fact Dorgu can read off the object. kustomize is not in that list, and the reason is worth reading before you rely on any of this: see [the kustomize limitation](#the-kustomize-limitation).
 
 <Note>
   **Version requirement.** The ownership record ships in **operator v0.9.0**; the refusal is enforced by **CLI v0.10.0**. They are a matched pair. See [version coupling](#version-coupling) before you upgrade one without the other.
+</Note>
+
+<Note>
+  **Two corrections are merged and ship in the next release, not in v0.9.0 / v0.10.0.** Clean-room run #3 disproved two claims this page used to make, and both fixes are on `master` awaiting a release:
+
+  - An `Update`-operation field manager **does** conflict with a later server-side apply. The CLI now [removes its own field-manager entry](#dorgu-leaves-no-field-manager-behind) after patching, and the operator counts a foreign `Update`-op owner of a container's `resources` as ownership.
+  - The kustomize rule never fired on real kustomize output. It now matches the markers kustomize actually emits, and [the limitation is stated plainly](#the-kustomize-limitation) instead of being papered over.
+
+  Both are called out in place below. Everything else on this page describes operator v0.9.0 and CLI v0.10.0 as released.
 </Note>
 
 ## Why Dorgu refuses
@@ -26,7 +37,7 @@ The failure mode differs by owner, and none of them are good:
 | Helm | Claims the fields away from Helm's field manager. The next `helm upgrade` fails outright with a field-manager conflict. |
 | ArgoCD | Reverted on the next sync, or rejected outright under server-side apply. |
 | Flux | Reverted the next time Flux reconciles the Deployment. |
-| kustomize | Overwritten the next time the overlay is applied. |
+| kustomize | Overwritten the next time somebody runs `kubectl apply -k`. Detected only when the overlay opts into a marker: see [the kustomize limitation](#the-kustomize-limitation). |
 | unknown | An unseen owner is still an owner. A patch that collides with one breaks their next deploy. |
 
 ## `spec.workloadRef`
@@ -59,7 +70,7 @@ spec:
 | `name` | The live Deployment's `metadata.name`. On a brownfield cluster this is usually **not** the persona name: persona `frontend` resolves to Deployment `frontend-podinfo`. |
 | `namespace` | The Deployment's namespace. |
 | `container` | The container whose resources were observed, and the one a fix would target. |
-| `managedBy` | One of `helm`, `argocd`, `flux`, `kustomize`, `unmanaged`, `unknown`. Defaults to `unknown`. |
+| `managedBy` | One of `helm`, `argocd`, `flux`, `kustomize`, `unmanaged`, `unknown`. Defaults to `unknown`. `kustomize` is only ever set from an opt-in marker; see [the kustomize limitation](#the-kustomize-limitation). |
 | `managedByDetail` | The specific owner in prose, so a refusal can name what owns the workload rather than saying that something does. |
 | `observedResources` | The live container's `requests` and `limits`. An **empty string means the workload does not set that key**, which is a different fact from a value of zero. |
 | `observedImage` | The container's live image reference including its tag. The only image Dorgu has actually read. |
@@ -78,19 +89,86 @@ The operator reads server-side-apply field managers plus labels and annotations,
 | 1 | `argocd` | `argocd.argoproj.io/tracking-id` annotation, `argocd.argoproj.io/instance` label, or the `argocd-controller` / `argocd-application-controller` field manager |
 | 2 | `flux` | `kustomize.toolkit.fluxcd.io/name` or `helm.toolkit.fluxcd.io/name` label, or the `kustomize-controller` / `helm-controller` field manager |
 | 3 | `helm` | `meta.helm.sh/release-name` annotation, `app.kubernetes.io/managed-by: Helm`, or the `helm` field manager |
-| 4 | `kustomize` | `app.kubernetes.io/managed-by: kustomize` |
-| 5 | `unknown` | Some other manager owns fields through **server-side apply** and Dorgu does not recognise it. `managedByDetail` names it. |
-| 6 | `unmanaged` | None of the above. Nothing reconciles this workload. |
+| 4 | `kustomize` | `app.kubernetes.io/managed-by: kustomize-*` (the versioned value kustomize generates) or a bare `kustomize` written by hand, or the `config.kubernetes.io/origin` / `alpha.config.kubernetes.io/transformations` build-metadata annotations. **All three are opt-in:** see [the kustomize limitation](#the-kustomize-limitation). |
+| 5 | `unknown` | Another field manager already owns the fields a fix would write, and Dorgu does not recognise it. That is any **`Apply`**-operation entry, or an **`Update`**-operation entry holding a container's `resources` block. `managedByDetail` names it. |
+| 6 | `unmanaged` | None of the above. Nothing Dorgu can see reconciles this workload. |
 
-Two details are worth knowing:
+Three details are worth knowing:
 
-- **Only `Apply`-operation field managers count as ownership.** `kubectl patch` and `kubectl set` leave an `Update`-operation entry, which claims no ongoing ownership of the fields, so it says nothing about whether a future patch will conflict. A Deployment only ever touched by `kubectl` therefore reads as `unmanaged`, which is the one state where patching is safe.
+- **An `Update`-operation field manager counts as an owner when it holds the fields a fix would write.** This page used to say the opposite: that the `Update`-operation entry `kubectl patch` and `kubectl set` leave behind "claims no ongoing ownership of the fields, so it says nothing about whether a future patch will conflict". That was wrong, and it was reproduced twice against a real API server. Apply conflict detection is about *who owns the field*, not about how they came to own it:
+
+  ```
+  $ kubectl set resources deploy/probe --limits=memory=32Mi      # kubectl-set:Update
+  $ kubectl apply --server-side --field-manager=some-gitops-tool -f probe.yaml
+  error: Apply failed with 1 conflict: conflict with "kubectl-set" using apps/v1:
+    .spec.template.spec.containers[name="probe"].resources.limits.memory
+  ```
+
+  So a foreign manager holding a container's `resources` reads as `unknown` whichever operation put it there. The check is scoped to `resources` on purpose: a manager that owns only `spec.replicas` (an autoscaler) or a pod-template annotation (a sidecar injector) is not in the way of a resource patch, and treating it as an owner would make Dorgu refuse to heal on most real clusters for no safety gain. An entry whose field set cannot be parsed is treated as owning, on the same house rule as `unknown`.
+
+- **Your own `kubectl` is not an owner, and neither is Dorgu.** Managers named `kubectl-*`, `dorgu`, and `kube-controller-manager` are skipped by that rule. A human with kubectl is the *definition* of `unmanaged` rather than a counter-example to it, and refusing there would leave you worse off than healing. A leftover `kubectl-set` claim is a genuine conflict waiting for the next server-side apply, and a heal **clears** it rather than adding to it: see [Dorgu leaves no field manager behind](#dorgu-leaves-no-field-manager-behind).
+
 - **A Flux `HelmRelease` reads as `flux`, not `helm`,** because Flux is what reconciles it. Editing chart values without going through the Flux source would get reverted.
 
 <Warning>
   **`unknown` is treated as owned.** Where the Deployment cannot be resolved, or its server-side applier is not one Dorgu recognises, `managedBy` is `unknown` and Dorgu explains rather than writes. Absence of evidence that patching is safe is not evidence that it is, and nothing is patched on a guess.
 
   One consequence worth knowing: a workload the operator cannot resolve also loses its advisory `kubectl` commands, so a resolution failure costs plan usefulness as well as grounding.
+</Warning>
+
+## The kustomize limitation
+
+Dorgu cannot reliably tell that a Deployment came from a kustomize overlay. Rather than advertise a protection it does not have, it says so.
+
+**kustomize is a client-side renderer with no controller.** It builds YAML and hands it to `kubectl`; nothing of kustomize is left running in your cluster, and nothing reconciles its output until a human runs `kubectl apply -k` again. A Deployment created that way is indistinguishable at the API level from one created with `kubectl apply -f`: the same `kubectl-client-side-apply` field manager, no label, no annotation. So **a plain `kubectl apply -k` reads as `unmanaged`, and Dorgu will patch it.**
+
+The three markers in the detection table above are all set by the *kustomization*, not by kustomize:
+
+| Marker | Written when the kustomization sets |
+|--------|-------------------------------------|
+| `app.kubernetes.io/managed-by: kustomize-v5.8.1` | `buildMetadata: [managedByLabel]` |
+| `config.kubernetes.io/origin` | `buildMetadata: [originAnnotations]` |
+| `alpha.config.kubernetes.io/transformations` | `buildMetadata: [transformerAnnotations]` |
+
+<Warning>
+  **The rule this replaces never fired on real kustomize output.** Detection required `app.kubernetes.io/managed-by: kustomize` **exactly**, and the label kustomize generates is **versioned**: `kustomize-v5.8.1`, checked against the version shipped inside `kubectl`. So the exact match only ever matched a bare `kustomize` somebody had hand-written into `commonLabels`. In clean-room testing a plain `kubectl apply -k` was classified `unmanaged`, which is precisely what the published claim said could not happen. The match is now on the `kustomize` prefix so both forms are recognised, and the honest statement is the one above: **an overlay that opts into no build metadata is invisible to Dorgu.**
+</Warning>
+
+What that costs you is narrower than it sounds, and Dorgu names it at the moment it matters. Because nothing reconciles an overlay on its own, a patch is not *fought*: it survives until somebody re-runs `kubectl apply -k`, at which point the overlay's value wins and the fix is reverted. There is no conflict and no broken deploy, because Dorgu [leaves no field-manager entry behind](#dorgu-leaves-no-field-manager-behind). So immediately before it writes, the CLI prints the limit of the classification that got it there:
+
+```
+  Nothing Dorgu can see reconciles this Deployment. A kustomize overlay leaves no marker,
+  so if this app is rendered by one, re-applying it will revert this change.
+```
+
+Mirror the change back into your overlay, exactly as you would into Helm values.
+
+## Dorgu leaves no field manager behind
+
+*We change it, we do not own it.* On the one class of workload Dorgu will write to, it takes the fields it needs and then hands them back.
+
+A heal is two writes, not one:
+
+1. A strategic-merge patch under the field manager **`dorgu`**, rather than kubectl's default `kubectl-patch`. Using its own name is what makes the entry distinguishable from a `kubectl patch` *you* ran, which Dorgu has no business deleting.
+2. A second patch removing that `dorgu` entry from `metadata.managedFields`, followed by a read-back to confirm it is gone.
+
+The second write is the point, and it does more than avoid harm. An `Update` takes the fields it writes *away* from whoever held them, so a heal moves any pre-existing `kubectl-set` or `kubectl-patch` claim on those fields onto `dorgu` and then drops it. The fields end up owned by nobody, which is the state a server-side apply can claim without a conflict. **A heal now clears a conflict that was already there rather than merely avoiding a new one.** Bring a healed Deployment under Helm, ArgoCD, or Flux afterwards and that first apply succeeds.
+
+<Note>
+  **Why not `--server-side --field-manager=dorgu --force-conflicts`?** Because it is the worse of the two. Forcing the conflict works once and makes Dorgu a *persistent* `Apply`-operation owner of those fields, which is exactly what the next `helm upgrade` would then have to fight. Patch and release leaves nothing behind to fight.
+</Note>
+
+<Warning>
+  **If the entry cannot be removed, Dorgu tells you.** The removal is a read-modify-write over state Dorgu does not own, so it carries the `resourceVersion` as a precondition, retries against fresh state on a conflict, and reads the object back afterwards. The read-back is not ceremony: the API server accepts a client-supplied `managedFields` list on some paths and recomputes it on others, so the only honest way to report "Dorgu owns nothing here" is to look.
+
+  The workload is patched either way, so a failure here is not a failed heal. It is a future apply conflict, and it is printed as a warning naming the fields Dorgu now owns and the command to clear them:
+
+  ```bash
+  kubectl patch deployment <name> -n <ns> --type merge \
+    -p '{"metadata":{"managedFields":[{}]}}'
+  ```
+
+  That clears the whole `managedFields` list; every other manager reclaims its fields on its next apply. Leaving the footprint in silence was never an option.
 </Warning>
 
 ## What changes about the plan
@@ -290,21 +368,46 @@ CLI v0.10.0 and operator v0.9.0 are a **matched pair**. A missing `workloadRef` 
 
 ## Trying it
 
-The [greenfield quickstart](/cli/quickstart) heals end to end, because its demo app is applied with `kubectl apply` and is therefore `unmanaged`. To see the ownership path instead, point Dorgu at anything you installed with Helm and break it:
+The [greenfield quickstart](/cli/quickstart) heals end to end, because its demo app is applied with `kubectl apply` and is therefore `unmanaged`. To see the ownership path instead, point Dorgu at anything you installed with Helm and break it **through Helm**:
 
 ```bash
 # Any Helm release will do. Import a persona so Dorgu can see it.
 dorgu persona import -n apps --all --apply
 
-# Give one of them a limit it cannot live within
-kubectl -n apps set resources deploy/<deployment> --limits=memory=32Mi
+# Give one of them a limit it cannot live within. Set it through Helm, so Helm
+# stays the only manager of that field. The values key is chart-specific;
+# `resources.limits.memory` is the common one.
+helm upgrade <release> <chart> -n apps --reuse-values \
+  --set resources.limits.memory=32Mi
 
 # One detection cycle later
 dorgu remediation list -n apps
 dorgu remediation diff <remediation-name> -n apps
 ```
 
-The diff names the Helm release, shows the Deployment change, and offers `--no-heal` and `reject` instead of `approve`. Apply the fix through Helm using whatever values key that chart exposes, then run your usual `helm upgrade`.
+Pick a limit the container genuinely cannot live within. If the pod comes back healthy, halve it and try again.
+
+<Warning>
+  **Break it through the owner, not with `kubectl set resources`.** An earlier version of this walkthrough used `kubectl -n apps set resources deploy/<deployment> --limits=memory=32Mi`. It reaches the same broken state and Dorgu behaves identically: it detects, diagnoses, names the Helm release, and writes nothing at all. But `kubectl set` leaves a `kubectl-set` field manager owning `resources.limits.memory`, so the `helm upgrade` this walkthrough ends on **fails with a field-manager conflict against `kubectl-set`** and reads as though Dorgu broke the release. Dorgu never touched it, and the guard held. Setting the limit through `helm upgrade` leaves no conflicting manager, so the closing step tests the thing it is there to test.
+
+  If you already ran the old version and are stuck on that conflict, clear the stale manager first:
+
+  ```bash
+  kubectl patch deployment <deployment> -n apps --type merge \
+    -p '{"metadata":{"managedFields":[{}]}}'
+  ```
+
+  Every manager, Helm included, reclaims its fields on its next apply.
+</Warning>
+
+The diff names the Helm release, shows the Deployment change, and offers `--no-heal` and `reject` instead of `approve`. Apply the fix where that chart's values live, then run your usual upgrade and record the decision:
+
+```bash
+helm upgrade <release> <chart> -n apps --reuse-values \
+  --set resources.limits.memory=128Mi
+
+dorgu remediation approve <remediation-name> -n apps --no-heal
+```
 
 That `helm upgrade` succeeding afterwards is the whole point.
 

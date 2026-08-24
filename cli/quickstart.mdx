@@ -146,7 +146,9 @@ Within a few seconds the pod goes `OOMKilled`, then `CrashLoopBackOff`. Left alo
 <Note>
   **This demo heals end to end because nothing reconciles it.** You applied it with `kubectl apply`, so Dorgu records `managedBy: unmanaged` and is free to patch the Deployment.
 
-  On your real apps that is often not the case. For a Deployment that Helm, ArgoCD, Flux, or kustomize owns, Dorgu detects and diagnoses exactly the same but **will not patch it**: it names the owner and tells you what to change in your source of truth instead. Read [the ownership model](/ownership-model) before you point this at anything you deploy with Helm.
+  On your real apps that is often not the case. For a Deployment that Helm, ArgoCD, or Flux owns, Dorgu detects and diagnoses exactly the same but **will not patch it**: it names the owner and tells you what to change in your source of truth instead. Read [the ownership model](/ownership-model) before you point this at anything you deploy with Helm.
+
+  A kustomize overlay is the exception, and Dorgu says so before it writes: it leaves no marker on what it renders, so `kubectl apply -k` output reads as `unmanaged` too. Dorgu will patch it, and your next `kubectl apply -k` will revert the patch rather than fail on it. See [the kustomize limitation](/ownership-model#the-kustomize-limitation).
 </Note>
 
 ## 4. Watch Dorgu detect and diagnose it
@@ -302,7 +304,7 @@ Dorgu only watches workloads that have an `ApplicationPersona`. Without one, a b
     dorgu remediation approve <remediation-name> -n apps
     ```
 
-    **If it names a Helm release, an ArgoCD application, a Flux resource, or a kustomize overlay,** Dorgu will not patch it, and the diff offers `--no-heal` and `reject` rather than `approve`. Patching an owned Deployment claims those fields away from its owner, and the next `helm upgrade` or sync then fails outright rather than quietly reverting. So make the change at the source the plan points you to, then record the decision:
+    **If it names a Helm release, an ArgoCD application, or a Flux resource,** Dorgu will not patch it, and the diff offers `--no-heal` and `reject` rather than `approve`. Patching an owned Deployment claims those fields away from its owner, and the next `helm upgrade` or sync then fails outright rather than quietly reverting. So make the change at the source the plan points you to, then record the decision:
 
     ```bash
     dorgu remediation approve <remediation-name> -n apps --no-heal

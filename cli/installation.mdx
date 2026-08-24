@@ -15,7 +15,7 @@ import GoInstall from '/snippets/installation-go.mdx';
 </Warning>
 
 <Warning>
-  **CLI v0.10.0 pairs with operator v0.9.0.** v0.10.0 refuses to patch a Deployment that Helm, ArgoCD, Flux, or kustomize owns, using the `spec.workloadRef` record the operator writes. That record only exists from **operator v0.9.0**, and an absent record is treated as owned on purpose.
+  **CLI v0.10.0 pairs with operator v0.9.0.** v0.10.0 refuses to patch a Deployment that Helm, ArgoCD, or Flux owns, using the `spec.workloadRef` record the operator writes. That record only exists from **operator v0.9.0**, and an absent record is treated as owned on purpose.
 
   So **against operator v0.8.1 or older, every remediation carrying a workload change is declined** with exit code `4`. Nothing breaks and nothing is lost: `dorgu remediation approve --no-heal` records the decision and you apply the change yourself. But if you are healing workloads today, upgrade the operator alongside the CLI.
 

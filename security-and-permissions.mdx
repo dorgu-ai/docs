@@ -8,7 +8,7 @@ Dorgu's central claim is that **the operator never writes your workloads**. This
 Read it alongside the [ownership model](/ownership-model). Together they are the whole safety story:
 
 - **The operator cannot write workloads.** It has no `create`, `update`, or `patch` on Deployments. Kubernetes enforces that, not Dorgu's code.
-- **The CLI will not write workloads you have not handed it.** It runs as *you*, so RBAC cannot stop it. What stops it is the ownership guard: it refuses to patch a Deployment that Helm, ArgoCD, Flux, or kustomize reconciles.
+- **The CLI will not write workloads you have not handed it.** It runs as *you*, so RBAC cannot stop it. What stops it is the ownership guard: it refuses to patch a Deployment that Helm, ArgoCD, or Flux reconciles. Those three stamp what they reconcile, so their ownership is detectable; [kustomize is not](/ownership-model#the-kustomize-limitation), and the docs say so rather than implying a protection Dorgu cannot deliver.
 
 One is enforced by the API server. The other is enforced by the CLI. Both are needed, because they defend against different things.
 
@@ -61,7 +61,7 @@ Everything the operator is permitted to do falls into three buckets: **read clus
 | `incidentmemories/status` | get, update, patch | Resolution outcome and duration. |
 | `remediationactions.dorgu.io` | get, list, watch, create, update, patch | Propose fixes and record their lifecycle. **No `delete`.** |
 | `remediationactions/status` | get, update, patch | Phase transitions and verification results. |
-| `dorguevents.dorgu.io` | create, get, list, watch | The classified-event pipeline. Write-once records: **no `update`, no `delete`.** |
+| `dorguevents.dorgu.io` | create, get, list, watch, delete | The classified-event pipeline. Records are write-once (**no `update`**); `delete` is the retention cleaner pruning Dorgu's own records. See [why `delete` is here](#why-the-operator-can-delete-dorguevents). |
 | `apps/deployments`, `apps/replicasets` | **get, list, watch** | Persona validation, ownership detection, and pod-to-ReplicaSet-to-Deployment correlation. **Read-only.** |
 | `pods`, `namespaces`, `nodes` | get, list, watch | Detection signals and cluster discovery. **Read-only.** |
 | `events` | get, list, watch, create, patch | List and watch for the event pipeline; create and patch to record Dorgu's own Kubernetes Events. |
@@ -119,10 +119,12 @@ rules:
     resources: ["remediationactions/status"]
     verbs: ["get", "update", "patch"]
 
-  # DorguEvent CRD (event pipeline)
+  # DorguEvent CRD (event pipeline). `delete` is the retention and cap cleaner
+  # pruning dorgu's own records. Scoped to dorgu.io/dorguevents and to no
+  # workload kind.
   - apiGroups: ["dorgu.io"]
     resources: ["dorguevents"]
-    verbs: ["create", "get", "list", "watch"]
+    verbs: ["create", "get", "list", "watch", "delete"]
 
   # Deployments + ReplicaSets (read-only; ApplicationPersona validation and
   # pod->ReplicaSet->Deployment ownership correlation)
@@ -159,6 +161,21 @@ rules:
 <Note>
   **The `apps` rule is the one to read twice.** `verbs: ["get", "list", "watch"]` on `deployments` is what makes "the operator never writes workloads" a fact about your API server rather than a promise about Dorgu's source code. Even a bug, a malicious plan from the AI planner, or a compromised operator pod cannot patch a Deployment through this service account.
 </Note>
+
+### Why the operator can delete DorguEvents
+
+This ClusterRole is a trust artifact, so a new verb in it deserves an explanation rather than a silent diff.
+
+`delete` on `dorguevents.dorgu.io` is **merged and ships in the next operator release**. Without it the retention cleaner had no permission to act: it ran every cycle, failed, logged the failure, and removed nothing, while `DorguEvent` records accumulated in etcd. A five-app clean-room cluster produced 187 records in 100 minutes with no bound on the count. See [`dorguEvents.retention` and `dorguEvents.maxRecords`](/operator/configuration/helm-values#dorguevent-retention).
+
+The grant is scoped to **Dorgu's own CRD** and to no workload kind, so "the operator never writes workloads" is unchanged. Two tests in the operator repo hold that line, one asserting the new verb and one asserting the operator still cannot `create`, `update`, `patch`, or `delete` Deployments, ReplicaSets, Pods, Nodes, or Namespaces. Check both halves on your own cluster rather than taking either on trust:
+
+```bash
+SA=system:serviceaccount:dorgu-system:dorgu-operator
+
+kubectl auth can-i delete dorguevents.dorgu.io --as="$SA" -A   # yes
+kubectl auth can-i delete deployments          --as="$SA" -A   # no
+```
 
 ## How the AI API key reaches the operator
 

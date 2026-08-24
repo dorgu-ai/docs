@@ -59,6 +59,10 @@ healthCheck:
 metricsServer:
   enabled: true
 
+dorguEvents:
+  retention: 24h
+  maxRecords: 2000
+
 llm:
   provider: ""
   model: ""
@@ -141,6 +145,28 @@ When `healthCheck.enabled` is `false`, the operator still validates personas and
 <Warning>
   **Upgrading from a chart older than 0.8.0 turns detection on.** A release that never set `healthCheck.enabled` will start detecting after the upgrade: expect `IncidentMemory` records to appear, and `RemediationAction` proposals wherever the ClusterPersona self-healing mode is `propose` (the default). Nothing is applied without approval. To keep the old behaviour, upgrade with `--set healthCheck.enabled=false`.
 </Warning>
+
+### DorguEvent retention
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `dorguEvents.retention` | duration | `24h` | How long a `DorguEvent` record is kept before the cleaner removes it. Maps to `--dorgu-event-retention`. |
+| `dorguEvents.maxRecords` | int | `2000` | Maximum records kept regardless of age; the oldest go first. `0` drops the cap and leaves retention as the only bound. Maps to `--dorgu-event-max-records`. |
+
+`DorguEvent` records are Dorgu's own log of what it saw, readable with `kubectl get dorguevent -A`. They live in etcd, so they are bounded twice over: by age, and by count.
+
+The count bound is the one that holds on a large cluster. Records arrive in proportion to cluster size, so a time window alone bounds nothing: a five-app clean-room cluster produced 187 records in 100 minutes, roughly 2,700 a day, every one of them inside the 24-hour window and all of them in etcd. The cleaner runs every 30 minutes, deletes oldest-first, and runs one pass at startup rather than waiting a full interval, because a restarted operator inherits the largest backlog it will ever see.
+
+Both flags are rendered on the operator container unconditionally, so the pod spec always states what bounds the record count, `maxRecords: 0` included:
+
+```bash
+kubectl -n dorgu-system get deploy dorgu-operator \
+  -o jsonpath='{.spec.template.spec.containers[0].args}{"\n"}'
+```
+
+<Note>
+  **Merged, ships in the next operator release.** Before it, the cleaner had no `delete` permission on `dorguevents.dorgu.io` at all: it ran every cycle, failed, and removed nothing. The ClusterRole now grants `delete` on Dorgu's own CRD and on no workload kind. See [why that verb is there](/security-and-permissions#why-the-operator-can-delete-dorguevents).
+</Note>
 
 ### AI
 
