@@ -63,12 +63,13 @@ The healing loop is what Level 2 looks like end to end:
 
 Trust level answers *how much autonomy has Dorgu earned*. It is not the only question. The other one is *whose workload is this*, and the answer does not depend on trust at all.
 
-A Deployment that Helm, ArgoCD, Flux, or kustomize reconciles already has an owner, and that owner's next apply is what has to carry any fix. So for those workloads Dorgu is **understanding and recommendation only**, at every trust level. It detects, diagnoses, and tells you exactly what to change in your source of truth, and it does not patch the Deployment. There is no override flag.
+A Deployment that Helm, ArgoCD, or Flux reconciles already has an owner, and that owner's next apply is what has to carry any fix. So for those workloads Dorgu is **understanding and recommendation only**, at every trust level. It detects, diagnoses, and tells you exactly what to change in your source of truth, and it does not patch the Deployment. There is no override flag.
 
 | | Detect and diagnose | Propose a plan | CLI patches the Deployment |
 |---|---|---|---|
 | `managedBy: unmanaged` | Yes | Yes | **Yes**, with your credentials and your confirmation |
-| Owned by Helm, ArgoCD, Flux, kustomize | Yes | Yes, shaped for that owner | No |
+| Owned by Helm, ArgoCD, Flux | Yes | Yes, shaped for that owner | No |
+| `managedBy: kustomize` | Yes | Yes, shaped for that owner | No. Set only from an [opt-in marker](/ownership-model#the-kustomize-limitation); a plain overlay reads as `unmanaged`. |
 | `managedBy: unknown` | Yes | Yes | No. Unknown is treated as owned. |
 
 This is not a limitation grafted onto the trust model; it is the trust model applied honestly. Level 2 says "propose, a human approves". A workload owned by Helm has *already* delegated its desired state to a pipeline, and writing around that pipeline is not something a per-remediation approval can make correct: the fix works, and the owner's next deploy fails on a field-manager conflict.

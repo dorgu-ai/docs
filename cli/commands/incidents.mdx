@@ -58,9 +58,19 @@ dorgu incidents list --json
 | SEVERITY | `info`, `warning`, or `critical` |
 | CATEGORY | Incident category (e.g. `resource`, `security`) |
 | SIGNAL | Detection signal (e.g. `OOMKilled`, `CrashLoopBackOff`) |
-| PERSONA | ApplicationPersona the incident relates to |
+| PERSONA | ApplicationPersona the incident relates to. On an **unattributed** incident this is the workload name, and no persona of that name exists. |
 | PHASE | `Detected`, `Investigating`, `Resolved`, or `Recurring` |
 | AGE | Time since the incident was created |
+
+<Note>
+  **Unattributed incidents look like any other row.** Where no single `ApplicationPersona` claims a workload's signals, the operator files the incident against the workload rather than folding it into a neighbouring app's, and proposes no remediation for it. The column above shows that workload name. Separate them with the label:
+
+  ```bash
+  kubectl get incidentmemory -A -l dorgu.io/attribution=unattributed
+  ```
+
+  The usual fix is to import a persona for the app: [`dorgu persona import`](/cli/commands/persona#persona-import). See [one application at a time](/operator/features/self-healing#one-application-at-a-time).
+</Note>
 
 ---
 

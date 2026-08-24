@@ -142,7 +142,7 @@ dorgu persona list -n apps
 The full walkthrough, including breaking an imported app and healing it, is in the [CLI quickstart](/cli/quickstart#brownfield-a-cluster-that-already-has-apps). Requires CLI v0.9.0 or newer.
 
 <Warning>
-  **On a brownfield cluster, expect most of these workloads to be owned.** For a Deployment that Helm, ArgoCD, Flux, or kustomize reconciles, Dorgu detects and diagnoses exactly as it does for anything else, but it is **recommendation only**: it names the owner and tells you what to change in your source of truth rather than patching the Deployment. Patching an owned workload claims those fields away from its owner, and the next `helm upgrade` then fails outright rather than quietly reverting.
+  **On a brownfield cluster, expect most of these workloads to be owned.** For a Deployment that Helm, ArgoCD, or Flux reconciles, Dorgu detects and diagnoses exactly as it does for anything else, but it is **recommendation only**: it names the owner and tells you what to change in your source of truth rather than patching the Deployment. Patching an owned workload claims those fields away from its owner, and the next `helm upgrade` then fails outright rather than quietly reverting.
 
   Read [the ownership model](/ownership-model) before your first approval on a real cluster. It also covers the version coupling: **CLI v0.10.0 pairs with operator v0.9.0**, and an older CLI will patch an owned Deployment regardless.
 </Warning>

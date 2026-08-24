@@ -42,13 +42,20 @@ As of operator v0.9.0 the operator reads the live Deployment at proposal time an
 
 The reason is concrete. Under server-side apply, patching a Helm-owned Deployment claims those fields away from Helm's field manager, and the next `helm upgrade` then **fails outright** with a field-manager conflict rather than quietly reverting the fix. A fix that breaks your next deploy is not a fix.
 
+The same logic runs the other way on the workloads Dorgu *does* patch. **A heal leaves no ownership footprint:** the CLI patches under its own `dorgu` field manager and then strips that entry, so the fields end up owned by nobody and a later server-side apply succeeds. Because an `Update` takes fields away from whoever held them, a heal even clears a pre-existing `kubectl-set` claim rather than adding to it. New in CLI v0.11.0: [Dorgu leaves no field manager behind](/ownership-model#dorgu-leaves-no-field-manager-behind).
+
 | `managedBy` | Detection | Diagnosis | Proposal | CLI patches the Deployment |
 |-------------|-----------|-----------|----------|----------------------------|
 | `unmanaged` | Yes | Yes | Yes | **Yes** |
-| `helm`, `argocd`, `flux`, `kustomize` | Yes | Yes | Yes, shaped for the owner | No |
+| `helm`, `argocd`, `flux` | Yes | Yes | Yes, shaped for the owner | No |
+| `kustomize` | Yes | Yes | Yes, shaped for the owner | No. Set only from an [opt-in marker](/ownership-model#the-kustomize-limitation); a plain `kubectl apply -k` reads as `unmanaged`. |
 | `unknown` (including an unresolvable Deployment) | Yes | Yes | Yes | No |
 
 For an owned workload the operator rewrites every step whose command would write to the cluster: the command is dropped, and the description becomes the chart values to set for a Helm release, the Git path for an ArgoCD application, or the overlay for kustomize. **Read-only commands survive**, because `kubectl logs` and `kubectl get events` matter most on exactly the workloads Dorgu will not touch.
+
+<Note>
+  **kustomize is named in the enum but not in the claim.** It is a client-side renderer with no controller, and it stamps nothing on its output unless the kustomization opts in, so a Deployment from `kubectl apply -k` is indistinguishable from one applied by hand. The published guarantee therefore names **Helm, ArgoCD and Flux**, the three that run controllers and stamp what they reconcile. Full detail, and what the CLI prints before it writes: [the kustomize limitation](/ownership-model#the-kustomize-limitation).
+</Note>
 
 <Note>
   **Persona writes are not gated on ownership.** A `persona-update` step patches the `ApplicationPersona`, the operator does that itself, and it is always safe whoever owns the workload. `autoExecutable` semantics are unchanged. Ownership governs one thing only: the CLI patching your Deployment.
@@ -75,7 +82,47 @@ The health-check reconciler runs on a fixed interval — 60 seconds by default, 
   **OOM detection needs no metrics-server.** `OOMKilled` is read straight from the container's current or last termination state in the pod status, so the most valuable signal works on a bare cluster. Metrics-server only adds the container-level usage and saturation signals.
 </Note>
 
-When a signal stops appearing, the incident auto-resolves after a 5-minute grace period.
+### One application at a time
+
+Before anything is diagnosed, signals are **partitioned by application and namespace**. A rule handed only one application's signals can only ever describe one application.
+
+That ordering is load-bearing. Diagnosis used to run once across every signal in the cluster, so a rule that takes "all the OOMKilled signals" as a single finding named the first persona it saw as the owner and listed every OOM-killed pod as affected. On a clean-room cluster with four unrelated apps failing at once it produced **one** `IncidentMemory` holding pods from three namespaces, and the planner, handed a bundle spanning three namespaces, concluded the nodes were under memory pressure. The nodes were at 23%.
+
+Attribution is correspondingly strict:
+
+- **Namespace-scoped.** Only personas in the signal's own namespace are considered. An app can never claim another namespace's pod.
+- **Exactly one owner, most specific claim wins.** Personas `api` and `api-server` both prefix-match pod `api-server-7f9d-x2q`; the longer name is the real claim and the shorter one is a coincidence of prefixes. A genuine tie at the same specificity is left unattributed rather than handed to whichever persona the API server listed first.
+
+<Note>
+  **Unattributed incidents.** A workload no single persona claims still gets an incident, filed against **the workload** with `spec.attribution: unattributed` and the label `dorgu.io/attribution=unattributed`. It is a real outage Dorgu can see but cannot diagnose against a persona, so no remediation is proposed for it and the log says why. Once you import a persona and an attributed incident starts tracking the same workload, the unattributed one closes as superseded, so onboarding an app mid-outage does not count it twice.
+
+  An honest "something here is broken and I do not know whose it is" beats a confident attribution to the wrong app. List them with:
+
+  ```bash
+  kubectl get incidentmemory -A -l dorgu.io/attribution=unattributed
+  ```
+</Note>
+
+Cluster-scoped findings (nodes, control plane) belong to no application. They are diagnosed and logged, and deliberately **not** filed against a persona, because giving them an owner they do not have is the mistake above.
+
+### Resolution needs evidence, not silence
+
+An incident closes only when recovery can be **observed**. Two conditions have to hold together:
+
+1. The signal has been absent for the 5-minute grace period, and
+2. the workload's pods are present, `Ready`, and have stayed `Ready` with no container restarts and no container in a waiting state for a **6-minute stability window**.
+
+If the cluster cannot be read, if the pods cannot be found, or if they are there but not yet stable, **the incident stays open** and the reason is logged. When one does close, the evidence is written to `spec.resolution.action` as `auto-resolved: <what was observed>`, so the reason lives on the object rather than only in a log line that has since rotated away.
+
+<Warning>
+  **Absence of a signal is not recovery.** The old rule needed only two absences: no matching signal this cycle, plus the grace period. A crash loop backs off in lengthening intervals up to five minutes, so a completely dead pod falls silent *inside* the grace period and used to read as fixed. In clean-room run #3 an incident reached **51 occurrences**, went `Resolved`, and stayed in `CrashLoopBackOff`, while `dorgu health` reported one active incident with three applications down. The stability window is longer than the longest backoff interval for exactly that reason.
+
+  The one case where no pods still resolves: the workload has no pods **and** no Deployment (you deleted it), or its Deployment is scaled to zero. A Deployment that wants replicas and has none running is down, not recovered.
+</Warning>
+
+<Note>
+  **New in operator v0.10.0.** Grouping, strict attribution, unattributed incidents, and evidence-based resolution ship in v0.10.0. None of them are in v0.9.0.
+</Note>
 
 ## Diagnose
 
@@ -237,7 +284,9 @@ Earlier rungs are more explicit statements of intent, so they win. The value mat
 
 If a rung matches several Deployments, the persona reports `AmbiguousDeployment` and names the candidates rather than patching one at random. If no rung matches anything, it reports `NoDeployment` and lists every rung it tried.
 
-**Signal to persona.** Detection goes the other way and matches by **name prefix**: a signal about resource `X` is attributed to a persona when `X` equals the persona's `metadata.name` or `spec.name`, or starts with either followed by a hyphen. That is what handles pod suffixes, so a persona named `memhog` picks up `memhog-7d9f-x2k`. A persona named `api` will never pick up pods named `api-server-...`.
+**Signal to persona.** Detection goes the other way and matches by **name prefix**: a signal about resource `X` is attributed to a persona when `X` equals the persona's `metadata.name` or `spec.name`, or starts with either followed by a hyphen. That is what handles pod suffixes, so a persona named `memhog` picks up `memhog-7d9f-x2k`.
+
+Two rules bound it. Only personas in the **signal's own namespace** are considered, and the resource must be claimed by **exactly one** persona: where several match, the longest matching name wins, and a tie at the same length leaves the signal [unattributed](#one-application-at-a-time) rather than filed against a guess. So a persona named `api` does pick up `api-server-7f9d-x2q` when it is the only persona in the namespace, and loses it to `api-server` when that persona also exists.
 
 ## Troubleshooting
 
@@ -302,9 +351,15 @@ If a rung matches several Deployments, the persona reports `AmbiguousDeployment`
   </Accordion>
 
   <Accordion title="No incident is created, even though the pod is crash-looping">
-    Assuming the app does have a persona, check the **name prefix**. Signals are correlated to a persona by name: the persona matches when the resource name equals the persona's `metadata.name` or `spec.name`, or **starts with either followed by a hyphen**, which is how pod suffixes are handled. If your persona is `api` but the pods are `api-server-7d9f-x2k`, nothing matches. Name the persona so it prefix-matches the pods, and make sure it lives in the same namespace as the workload.
+    Assuming the app does have a persona, check the **name prefix** and the **namespace**. Signals are correlated to a persona by name: the persona matches when the resource name equals the persona's `metadata.name` or `spec.name`, or **starts with either followed by a hyphen**, which is how pod suffixes are handled. A persona named `checkout` never picks up pods named `payments-...`, and it never picks up pods in another namespace, because correlation never leaves the signal's own namespace.
 
     Note that this is a different lookup from persona-to-Deployment resolution, which needs no label and no prefix. A persona can be `Active`, having resolved its Deployment cleanly, and still collect no incidents because the pod names do not prefix-match. See [how a persona finds its Deployment](#how-a-persona-finds-its-deployment).
+
+    If the pods do prefix-match more than one persona at the same length, the signal is deliberately left [unattributed](#one-application-at-a-time) rather than filed against whichever one happened to be listed first. The incident still exists; it is filed against the workload:
+
+    ```bash
+    kubectl get incidentmemory -n <namespace> -l dorgu.io/attribution=unattributed
+    ```
   </Accordion>
 
   <Accordion title="The operator is installed but detects nothing">
@@ -332,7 +387,21 @@ If a rung matches several Deployments, the persona reports `AmbiguousDeployment`
   </Accordion>
 
   <Accordion title="Two incidents for one problem">
-    Expected. A single OOM usually raises both `OOMKilled` and `CrashLoopBackOff`. Dedup runs at the remediation layer, not the incident layer, so you see two incidents and one fix. Approving that one fix resolves both.
+    Expected. A single OOM usually raises both `OOMKilled` and `CrashLoopBackOff`. An incident is keyed by persona, category, and primary signal, so one application can hold several at once. Dedup runs at the remediation layer, not the incident layer, so you see two incidents and one fix. Approving that one fix resolves both.
+
+    What will *not* happen any more is the reverse: two applications sharing one incident. Signals are grouped per application per namespace before anything is diagnosed. See [one application at a time](#one-application-at-a-time).
+  </Accordion>
+
+  <Accordion title="An incident stays open although the pod looks healthy">
+    Give it the stability window. Closing an incident needs the signal absent for the 5-minute grace period **and** the pods observed `Ready`, restart-free, and out of any waiting state for a further **6 minutes**. A pod that came back 90 seconds ago has not cleared that bar yet.
+
+    The operator logs the specific reason each cycle at `V(1)`, naming the pod that is holding it open:
+
+    ```bash
+    kubectl -n dorgu-system logs deploy/dorgu-operator | grep "incident stays open"
+    ```
+
+    Typical reasons are a container that restarted inside the window, a pod in phase `Failed` (an evicted pod can outlive the failure that produced it, so delete it), or a Deployment that wants replicas and has none running. Anything Dorgu could not read leaves the incident open on purpose: under-reporting an outage is the one failure a reliability tool cannot afford. See [resolution needs evidence](#resolution-needs-evidence-not-silence).
   </Accordion>
 
   <Accordion title="Approve prints &quot;Dorgu will not patch this workload&quot; and exits 4">

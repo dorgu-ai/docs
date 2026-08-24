@@ -48,7 +48,7 @@ flowchart LR
     You review the plan with `dorgu remediation diff` and approve with one command. Approval is required by default.
   </Step>
   <Step title="Heal, or hand over">
-    The operator updates the app's desired state. Where nothing else reconciles the Deployment, the CLI applies the change with your credentials and the pod recovers. Where Helm, ArgoCD, Flux, or kustomize owns it, Dorgu names the owner and tells you what to change in your source of truth instead. It does not fight your deployment tool.
+    The operator updates the app's desired state. Where nothing else reconciles the Deployment, the CLI applies the change with your credentials and the pod recovers. Where Helm, ArgoCD, or Flux owns it, Dorgu names the owner and tells you what to change in your source of truth instead. It does not fight your deployment tool.
   </Step>
   <Step title="Remember">
     The operator verifies the fix, rolls it back automatically if health regresses, and keeps the incident and its outcome as organizational memory for next time.
@@ -58,7 +58,7 @@ flowchart LR
 <Note>
   **The operator never writes workloads.** It reads cluster state and updates its own CRDs. Deployments, Services, and everything else stay under the control of ArgoCD, Flux, `kubectl`, or the Dorgu CLI. This is an architectural invariant, not a setting, and it is enforced by RBAC rather than by convention: the operator's ClusterRole is [published in full](/security-and-permissions), with no `create`, `update`, or `patch` on Deployments and no access to Secrets.
 
-  **And the CLI will not write workloads you have not handed it.** It detects who owns each Deployment and refuses to patch one that Helm, ArgoCD, Flux, or kustomize reconciles, because that patch would break the owner's next apply. See [the ownership model](/ownership-model).
+  **And the CLI will not write workloads you have not handed it.** It detects who owns each Deployment and refuses to patch one that Helm, ArgoCD, or Flux reconciles, because that patch would break the owner's next apply. Those three run controllers and stamp what they reconcile; [kustomize does neither](/ownership-model#the-kustomize-limitation), and Dorgu says so rather than claiming otherwise. See [the ownership model](/ownership-model).
 </Note>
 
 ## Products
@@ -78,7 +78,7 @@ flowchart LR
 ## Key capabilities
 
 - **AI self-healing loop** — detect → diagnose → propose → approve → heal → remember, with human approval required by default
-- **Respects your deployment tool**: Dorgu detects who owns each workload and refuses to patch a Helm, ArgoCD, Flux, or kustomize-managed Deployment. It tells you what to change in your source of truth instead, so your next `helm upgrade` still works
+- **Respects your deployment tool**: Dorgu detects who owns each workload and refuses to patch a Helm, ArgoCD, or Flux-managed Deployment. It tells you what to change in your source of truth instead, so your next `helm upgrade` still works. And where it does patch, it removes its own field-manager entry afterwards, so it leaves no ownership footprint for your next apply to fight
 - **Grounded in the live workload**: every number Dorgu states, and every cap it computes, is read from the running container rather than from a stale record
 - **Ordered, reviewable fixes** — a plan with per-step diffs, rationale, and risk levels, not an opaque action
 - **Real guardrails**: a 2× blast-radius cap measured against the live value, no resource keys added that the workload does not set, rate limits, one remediation per incident, `kube-system` deny-listed, automatic rollback on regression

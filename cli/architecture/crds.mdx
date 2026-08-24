@@ -13,7 +13,7 @@ Dorgu extends Kubernetes with five Custom Resource Definitions (CRDs) that captu
 | **ClusterPersona** | Cluster | Cluster-level identity: nodes, add-ons, capacity, platform, and policy |
 | **IncidentMemory** | Namespaced | A detected incident, its diagnosed root cause, and how it was resolved |
 | **RemediationAction** | Namespaced | A proposed fix, its approval state, and its verification outcome |
-| **DorguEvent** | Namespaced | A classified, correlated Kubernetes event with a TTL |
+| **DorguEvent** | Namespaced | A classified, correlated Kubernetes event, bounded by age and by count |
 
 The primary CRD is **ApplicationPersona**, which describes a single application's desired operational profile and the Operator's observed state. **ClusterPersona** captures cluster-level context. The remaining three are the self-healing loop's memory — see [Self-healing](/operator/features/self-healing).
 
@@ -266,7 +266,8 @@ The ClusterPersona controller reconciles every 5 minutes, scanning nodes, namesp
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `personaRef` | object | Yes | `kind` (`ApplicationPersona` or `ClusterPersona`), `name`, `namespace` |
+| `personaRef` | object | Yes | `kind` (`ApplicationPersona` or `ClusterPersona`), `name`, `namespace`. On an unattributed incident it names the **workload**, and no persona of that name need exist. |
+| `attribution` | enum | No | `persona` or `unattributed`. See below. |
 | `category` | enum | Yes | `resource`, `scaling`, `health`, `security`, `deployment`, `dependency`, `node`, `controlplane` |
 | `severity` | enum | Yes | `info`, `warning`, `critical` |
 | `detection` | object | Yes | `signal`, `source`, `firstSeen`, `lastSeen`, `affectedResources[]` |
@@ -285,7 +286,28 @@ The ClusterPersona controller reconciles every 5 minutes, scanning nodes, namesp
 | `lastOccurrence` | timestamp | Most recent detection |
 | `conditions[]` | array | Standard Kubernetes conditions |
 
-An incident auto-resolves once its signal has been absent for 5 minutes.
+### Attribution
+
+`spec.attribution` records how confidently the incident was tied to an application, and is mirrored to the label `dorgu.io/attribution` so it is one query:
+
+| Value | Meaning |
+|-------|---------|
+| `persona` | `personaRef` names an `ApplicationPersona` that exists. |
+| `unattributed` | No single persona claimed the signals, so the incident is recorded against the **workload** rather than folded into a neighbouring application's incident. A real outage Dorgu can see but cannot diagnose or remediate: no `RemediationAction` is proposed. |
+
+An unattributed incident closes once an attributed one is tracking the same workload, and its `resolution.action` says handover rather than recovery, because nothing observed the workload.
+
+```bash
+kubectl get incidentmemory -A -l dorgu.io/attribution=unattributed
+```
+
+### Resolution
+
+An incident auto-resolves only on **positive evidence of recovery**: its signal absent for a 5-minute grace period, *and* its pods observed `Ready`, restart-free, and out of any waiting state for a 6-minute stability window. Anything else, including any failure to read the cluster, leaves it open. `spec.resolution.action` records the evidence as `auto-resolved: <what was observed>`.
+
+<Note>
+  **`attribution` and evidence-based resolution are new in operator v0.10.0.** In v0.9.0 an incident resolved on the absence of a signal alone, which a crash loop in backoff could produce while still completely dead. See [self-healing](/operator/features/self-healing#resolution-needs-evidence-not-silence).
+</Note>
 
 ## RemediationAction
 
@@ -320,7 +342,7 @@ The operator populates this from the **live** Deployment at proposal time. It ex
 | `name` | string | Yes | The live Deployment's `metadata.name`. **Not** the persona name: persona `frontend` commonly resolves to Deployment `frontend-podinfo`. |
 | `namespace` | string | Yes | The Deployment's namespace |
 | `container` | string | No | The container whose resources were observed, and which a fix would target |
-| `managedBy` | enum | Yes | `helm`, `argocd`, `flux`, `kustomize`, `unmanaged`, `unknown`. **Defaults to `unknown`.** |
+| `managedBy` | enum | Yes | `helm`, `argocd`, `flux`, `kustomize`, `unmanaged`, `unknown`. **Defaults to `unknown`.** `kustomize` is only set from an [opt-in marker](/ownership-model#the-kustomize-limitation). |
 | `managedByDetail` | string | No | The specific owner in prose, e.g. `Helm release "frontend" in namespace apps`. Max 253 characters. |
 | `observedResources` | object | No | `requests` and `limits`, each a `cpu`/`memory` pair. **An empty string means the workload does not set that key**, which is distinct from a value of zero. |
 | `observedImage` | string | No | The container's live image reference including its tag. The only image Dorgu has read. |
@@ -378,7 +400,9 @@ Each entry in `steps[]`:
 
 ## DorguEvent
 
-`DorguEvent` is a write-once, classified Kubernetes event record with TTL-based cleanup. The event pipeline watches core Kubernetes events, classifies them by severity and category, correlates them to a persona and incident where it can, and stores them. There is no status subresource — the record is immutable.
+`DorguEvent` is a write-once, classified Kubernetes event record. The event pipeline watches core Kubernetes events, classifies them by severity and category, correlates them to a persona and incident where it can, and stores them. There is no status subresource, so the record is immutable.
+
+Records are bounded **by age and by count**: `dorguEvents.retention` (default `24h`) and `dorguEvents.maxRecords` (default `2000`, oldest pruned first). A per-record `spec.ttl` overrides the age bound for that record. See [DorguEvent retention](/operator/configuration/helm-values#dorguevent-retention).
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -391,6 +415,6 @@ Each entry in `steps[]`:
 | `incidentRef` | object | No | Linked IncidentMemory, when correlated |
 | `eventTime` | timestamp | Yes | When the original Kubernetes event occurred |
 | `k8sEventRef` | string | No | Original Kubernetes Event UID, used for deduplication |
-| `ttl` | duration | No | Retention period (default 24h) |
+| `ttl` | duration | No | Per-record retention override. Absent means the operator's `dorguEvents.retention` applies (default 24h). |
 
 Stream them live with `dorgu watch events`.

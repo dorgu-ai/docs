@@ -35,7 +35,7 @@ It also names what it **cannot** see: any Deployment with no matching `Applicati
 | **Nodes** | `kubectl get nodes` | Name, status (Ready/NotReady), roles, age |
 | **Resource Saturation** | ClusterPersona `.status.resourceSummary` | CPU and memory request utilization as a percentage of allocatable capacity |
 | **Control Plane** | Pods in `kube-system` with `tier=control-plane` | Health of API Server, Scheduler, Controller Manager, etcd |
-| **Active Incidents** | `IncidentMemory` CRDs (operator required) | Severity, category, signal, persona reference, age |
+| **Active Incidents** | `IncidentMemory` CRDs (operator required) | Severity, category, signal, persona reference, age. With N applications broken, this reports N: incidents are scoped to one application in one namespace, so one row never stands in for several apps. |
 | **Pending Remediations** | `RemediationAction` CRDs (operator required) | Count of remediations in `Pending` or `Approved` phase |
 | **Unmonitored** | Deployments with no matching `ApplicationPersona` | The Deployments Dorgu is not watching, and the command to onboard them |
 

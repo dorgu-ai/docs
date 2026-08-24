@@ -10,7 +10,7 @@ The `dorgu remediation` command group is how you work with `RemediationAction` r
 Approving does two things: it records your decision on the `RemediationAction`, and where Dorgu is allowed to, it heals the running workload. The operator patches the `ApplicationPersona` (desired state); the CLI patches the `Deployment` with your credentials. See [Self-healing](/operator/features/self-healing) for the full loop.
 
 <Warning>
-  **Dorgu will not patch a Deployment that Helm, ArgoCD, Flux, or kustomize owns.** `approve` and `heal` read `spec.workloadRef` and decline for every `managedBy` except `unmanaged`, exiting **`4`** (`ExitDeclined`). Nothing is approved and nothing changes; instead you get the owner named and the fix restated as what to change in your source of truth.
+  **Dorgu will not patch a Deployment that Helm, ArgoCD, or Flux owns.** `approve` and `heal` read `spec.workloadRef` and decline for every `managedBy` except `unmanaged`, exiting **`4`** (`ExitDeclined`). Nothing is approved and nothing changes; instead you get the owner named and the fix restated as what to change in your source of truth.
 
   There is no `--force` and no override flag, on purpose. Read [the ownership model](/ownership-model) for why, and note that it needs **CLI v0.10.0 with operator v0.9.0**: an older CLI ignores the record and patches anyway.
 </Warning>
@@ -526,7 +526,10 @@ Applies an approved remediation's resource change to the workload on its own. `a
     The container the operator observed, unless `--container` names another. Failing that, the only container if there is one, otherwise the container whose name matches the app. Anything else asks for `--container`.
   </Step>
   <Step title="Patch">
-    A strategic-merge patch that sets exactly the `resources.limits` and `resources.requests` fields the remediation changed (`cpu` and `memory` only) — nothing broader than the proposal.
+    A strategic-merge patch that sets exactly the `resources.limits` and `resources.requests` fields the remediation changed (`cpu` and `memory` only), and nothing broader than the proposal. It runs under the field manager `dorgu` rather than kubectl's default `kubectl-patch`, so the entry it creates is distinguishable from a `kubectl patch` you ran yourself.
+  </Step>
+  <Step title="Release">
+    The `dorgu` entry is then removed from `metadata.managedFields` and the object is read back to confirm it is gone, so a heal leaves **no ownership footprint** and a later server-side apply does not conflict with it. If the removal fails, the heal still succeeded and the CLI says loudly what is left behind and how to clear it. **New in CLI v0.11.0.** See [Dorgu leaves no field manager behind](/ownership-model#dorgu-leaves-no-field-manager-behind).
   </Step>
 </Steps>
 
@@ -534,14 +537,14 @@ Applies an approved remediation's resource change to the workload on its own. `a
 
 | Gate | Behavior |
 |------|----------|
-| **Workload owned by Helm, ArgoCD, Flux, or kustomize** | **Declined, exit code `4`.** Prints the owner, the Deployment diff, and the owner-shaped steps. No `--force` exists. |
+| **Workload owned by Helm, ArgoCD, or Flux** | **Declined, exit code `4`.** Prints the owner, the Deployment diff, and the owner-shaped steps. No `--force` exists. A `managedBy: kustomize` workload is declined identically, but that value is only ever set from an [opt-in marker](/ownership-model#the-kustomize-limitation). |
 | **`spec.workloadRef` absent** | **Declined.** Treated as owned: it means either an operator older than v0.9.0 or a workload that could not be read, and neither is evidence that patching is safe. |
 | Resolved Deployment disagrees with `workloadRef.name` | Refused. A decision about one workload does not carry to another. |
 | Phase `Rejected`, `Failed`, `Expired`, `RolledBack` | Refused. |
 | Phase `Approved`, `Applying`, `Verifying`, `Completed` | Proceeds — this is the expected path. |
 | Phase `Pending` or unset | Warns that healing directly is an implicit approval, then proceeds. |
 | Production-looking context | Refused if the current kube-context name contains `prod`. |
-| Confirmation | Prints the namespace, Deployment, container, and the exact field changes, then prompts `[y/N]` unless `--yes` is set. |
+| Confirmation | Prints the namespace, Deployment, container, and the exact field changes, then prompts `[y/N]` unless `--yes` is set. It also states the limit of the `unmanaged` classification: nothing Dorgu can see reconciles this Deployment, and [a kustomize overlay leaves no marker](/ownership-model#the-kustomize-limitation), so re-applying one would revert the change. |
 
 <Note>
   The ownership gate runs before the plan is resolved against the cluster, and an **advisory-only** plan never reaches it: there is no workload change to refuse, so an advisory remediation behaves identically on owned and unmanaged workloads.
