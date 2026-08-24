@@ -165,7 +165,7 @@ kubectl -n dorgu-system get deploy dorgu-operator \
 ```
 
 <Note>
-  **Merged, ships in the next operator release.** Before it, the cleaner had no `delete` permission on `dorguevents.dorgu.io` at all: it ran every cycle, failed, and removed nothing. The ClusterRole now grants `delete` on Dorgu's own CRD and on no workload kind. See [why that verb is there](/security-and-permissions#why-the-operator-can-delete-dorguevents).
+  **New in operator v0.10.0.** Before it, the cleaner had no `delete` permission on `dorguevents.dorgu.io` at all: it ran every cycle, failed, and removed nothing. The ClusterRole now grants `delete` on Dorgu's own CRD and on no workload kind. See [why that verb is there](/security-and-permissions#why-the-operator-can-delete-dorguevents).
 </Note>
 
 ### AI

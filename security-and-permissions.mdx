@@ -166,7 +166,7 @@ rules:
 
 This ClusterRole is a trust artifact, so a new verb in it deserves an explanation rather than a silent diff.
 
-`delete` on `dorguevents.dorgu.io` is **merged and ships in the next operator release**. Without it the retention cleaner had no permission to act: it ran every cycle, failed, logged the failure, and removed nothing, while `DorguEvent` records accumulated in etcd. A five-app clean-room cluster produced 187 records in 100 minutes with no bound on the count. See [`dorguEvents.retention` and `dorguEvents.maxRecords`](/operator/configuration/helm-values#dorguevent-retention).
+`delete` on `dorguevents.dorgu.io` is **new in operator v0.10.0**. Without it the retention cleaner had no permission to act: it ran every cycle, failed, logged the failure, and removed nothing, while `DorguEvent` records accumulated in etcd. A five-app clean-room cluster produced 187 records in 100 minutes with no bound on the count. See [`dorguEvents.retention` and `dorguEvents.maxRecords`](/operator/configuration/helm-values#dorguevent-retention).
 
 The grant is scoped to **Dorgu's own CRD** and to no workload kind, so "the operator never writes workloads" is unchanged. Two tests in the operator repo hold that line, one asserting the new verb and one asserting the operator still cannot `create`, `update`, `patch`, or `delete` Deployments, ReplicaSets, Pods, Nodes, or Namespaces. Check both halves on your own cluster rather than taking either on trust:
 

@@ -529,7 +529,7 @@ Applies an approved remediation's resource change to the workload on its own. `a
     A strategic-merge patch that sets exactly the `resources.limits` and `resources.requests` fields the remediation changed (`cpu` and `memory` only), and nothing broader than the proposal. It runs under the field manager `dorgu` rather than kubectl's default `kubectl-patch`, so the entry it creates is distinguishable from a `kubectl patch` you ran yourself.
   </Step>
   <Step title="Release">
-    The `dorgu` entry is then removed from `metadata.managedFields` and the object is read back to confirm it is gone, so a heal leaves **no ownership footprint** and a later server-side apply does not conflict with it. If the removal fails, the heal still succeeded and the CLI says loudly what is left behind and how to clear it. **Merged, ships in the next CLI release.** See [Dorgu leaves no field manager behind](/ownership-model#dorgu-leaves-no-field-manager-behind).
+    The `dorgu` entry is then removed from `metadata.managedFields` and the object is read back to confirm it is gone, so a heal leaves **no ownership footprint** and a later server-side apply does not conflict with it. If the removal fails, the heal still succeeded and the CLI says loudly what is left behind and how to clear it. **New in CLI v0.11.0.** See [Dorgu leaves no field manager behind](/ownership-model#dorgu-leaves-no-field-manager-behind).
   </Step>
 </Steps>
 

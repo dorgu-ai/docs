@@ -306,7 +306,7 @@ kubectl get incidentmemory -A -l dorgu.io/attribution=unattributed
 An incident auto-resolves only on **positive evidence of recovery**: its signal absent for a 5-minute grace period, *and* its pods observed `Ready`, restart-free, and out of any waiting state for a 6-minute stability window. Anything else, including any failure to read the cluster, leaves it open. `spec.resolution.action` records the evidence as `auto-resolved: <what was observed>`.
 
 <Note>
-  **`attribution` and evidence-based resolution are merged and ship in the next operator release.** In v0.9.0 an incident resolved on the absence of a signal alone, which a crash loop in backoff could produce while still completely dead. See [self-healing](/operator/features/self-healing#resolution-needs-evidence-not-silence).
+  **`attribution` and evidence-based resolution are new in operator v0.10.0.** In v0.9.0 an incident resolved on the absence of a signal alone, which a crash loop in backoff could produce while still completely dead. See [self-healing](/operator/features/self-healing#resolution-needs-evidence-not-silence).
 </Note>
 
 ## RemediationAction

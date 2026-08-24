@@ -42,7 +42,7 @@ As of operator v0.9.0 the operator reads the live Deployment at proposal time an
 
 The reason is concrete. Under server-side apply, patching a Helm-owned Deployment claims those fields away from Helm's field manager, and the next `helm upgrade` then **fails outright** with a field-manager conflict rather than quietly reverting the fix. A fix that breaks your next deploy is not a fix.
 
-The same logic runs the other way on the workloads Dorgu *does* patch. **A heal leaves no ownership footprint:** the CLI patches under its own `dorgu` field manager and then strips that entry, so the fields end up owned by nobody and a later server-side apply succeeds. Because an `Update` takes fields away from whoever held them, a heal even clears a pre-existing `kubectl-set` claim rather than adding to it. Merged, ships in the next CLI release: [Dorgu leaves no field manager behind](/ownership-model#dorgu-leaves-no-field-manager-behind).
+The same logic runs the other way on the workloads Dorgu *does* patch. **A heal leaves no ownership footprint:** the CLI patches under its own `dorgu` field manager and then strips that entry, so the fields end up owned by nobody and a later server-side apply succeeds. Because an `Update` takes fields away from whoever held them, a heal even clears a pre-existing `kubectl-set` claim rather than adding to it. New in CLI v0.11.0: [Dorgu leaves no field manager behind](/ownership-model#dorgu-leaves-no-field-manager-behind).
 
 | `managedBy` | Detection | Diagnosis | Proposal | CLI patches the Deployment |
 |-------------|-----------|-----------|----------|----------------------------|
@@ -121,7 +121,7 @@ If the cluster cannot be read, if the pods cannot be found, or if they are there
 </Warning>
 
 <Note>
-  **Merged, ships in the next operator release.** Grouping, strict attribution, unattributed incidents, and evidence-based resolution are all on `master` and are not in operator v0.9.0.
+  **New in operator v0.10.0.** Grouping, strict attribution, unattributed incidents, and evidence-based resolution ship in v0.10.0. None of them are in v0.9.0.
 </Note>
 
 ## Diagnose

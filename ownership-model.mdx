@@ -14,12 +14,12 @@ Those three are named deliberately. All three run a controller and stamp what th
 </Note>
 
 <Note>
-  **Two corrections are merged and ship in the next release, not in v0.9.0 / v0.10.0.** Clean-room run #3 disproved two claims this page used to make, and both fixes are on `master` awaiting a release:
+  **Two corrections land in operator v0.10.0 and CLI v0.11.0.** Clean-room run #3 disproved two claims this page used to make, and both fixes now ship:
 
-  - An `Update`-operation field manager **does** conflict with a later server-side apply. The CLI now [removes its own field-manager entry](#dorgu-leaves-no-field-manager-behind) after patching, and the operator counts a foreign `Update`-op owner of a container's `resources` as ownership.
-  - The kustomize rule never fired on real kustomize output. It now matches the markers kustomize actually emits, and [the limitation is stated plainly](#the-kustomize-limitation) instead of being papered over.
+  - An `Update`-operation field manager **does** conflict with a later server-side apply. **CLI v0.11.0** [removes its own field-manager entry](#dorgu-leaves-no-field-manager-behind) after patching, and **operator v0.10.0** counts a foreign `Update`-op owner of a container's `resources` as ownership.
+  - The kustomize rule never fired on real kustomize output. **Operator v0.10.0** matches the markers kustomize actually emits, and [the limitation is stated plainly](#the-kustomize-limitation) instead of being papered over.
 
-  Both are called out in place below. Everything else on this page describes operator v0.9.0 and CLI v0.10.0 as released.
+  Both are described in place below. Run the newest pair: on operator v0.9.0 and CLI v0.10.0, this page's ownership guard works but a heal still leaves a field-manager entry behind.
 </Note>
 
 ## Why Dorgu refuses
@@ -365,6 +365,14 @@ CLI v0.10.0 and operator v0.9.0 are a **matched pair**. A missing `workloadRef` 
 <Warning>
   Of the two mismatches, **CLI ≤ v0.9.0 against operator v0.9.0 is the dangerous one**. The other direction is merely conservative: it declines things it could have patched. This one silently does the thing the guard exists to prevent.
 </Warning>
+
+**CLI v0.11.0 and operator v0.10.0 are the current matched pair,** and the two halves of the footprint fix are independent rather than coupled. Neither requires the other to run, and there is no dangerous mismatch between them, only a partial one.
+
+| Combination | What happens |
+|-------------|--------------|
+| **CLI v0.11.0 + operator v0.10.0** | Correct. A heal leaves no field-manager entry, and a foreign `Update`-op owner of a container's `resources` is recognised as ownership. |
+| **CLI v0.11.0 + operator v0.9.0** | The footprint is still stripped, so a healed workload stays safe to bring under Helm, ArgoCD, or Flux. But the operator still counts `Apply`-op managers only, so a workload whose `resources` are held by a foreign `Update`-op manager reads `unmanaged` and is patched. |
+| **CLI v0.10.0 + operator v0.10.0** | Ownership is classified correctly, but a heal on an `unmanaged` workload still leaves a `kubectl-patch` entry owning the fields it wrote, so a later `helm upgrade` or server-side apply conflicts with it. This is the case worth upgrading out of. |
 
 ## Trying it
 
