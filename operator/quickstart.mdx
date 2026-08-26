@@ -1,29 +1,20 @@
 ---
 title: "Quickstart"
-description: "Install the operator with AI self-healing on and watch it diagnose a real failure in 5 minutes"
+description: "Install the operator, then watch the self-healing loop diagnose a real failure in 5 minutes"
 ---
 
-import OperatorInstallAI from '/snippets/operator-install-helm-ai.mdx';
+import OperatorInstall from '/snippets/operator-install-helm.mdx';
+import AiOffByDefault from '/snippets/ai-off-by-default.mdx';
 
-This guide installs the Dorgu Operator with the self-healing loop and AI planning enabled, then walks a real incident from detection to healed.
+This guide installs the Dorgu Operator with the self-healing loop running on its deterministic path, then walks a real incident from detection to healed. No API key is needed at any point.
 
 ## Step 1: Install the operator
 
-The self-healing loop is **on by default** as of chart 0.8.0. AI is the part you opt into.
+The self-healing loop is **on by default** as of chart 0.8.0. AI is the part you opt into, and it is not part of this walkthrough.
 
-```bash
-kubectl create namespace dorgu-system
+<OperatorInstall />
 
-# Optional — enables AI diagnosis and AI-written remediation plans
-kubectl create secret generic dorgu-llm -n dorgu-system \
-  --from-literal=ANTHROPIC_API_KEY=sk-ant-...
-```
-
-Then install the operator:
-
-<OperatorInstallAI />
-
-Omitting `--version` resolves the newest published chart. To pin an exact chart version, see the [installation guide](/operator/installation). Drop the `llm` and `aiRemediation` flags to run rule-based: detection, diagnosis, and remediation all work without a key. `healthCheck.interval=30s` only tightens the loop for the demo; the default is 60s. Metrics-server integration is on by default and adds container-level usage signals.
+Omitting `--version` resolves the newest published chart. To pin an exact chart version, see the [installation guide](/operator/installation#pin-a-chart-version). Add `--set healthCheck.interval=30s` to tighten the loop for the demo; the default is 60s. Metrics-server integration is on by default and adds container-level usage signals.
 
 <Note>
   To install the operator without the detection loop, add `--set healthCheck.enabled=false`. It will still validate personas and discover the cluster, but it will never open an incident or propose a fix.
@@ -34,13 +25,19 @@ kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=dorgu-operator 
   -n dorgu-system --timeout=120s
 ```
 
-Confirm the loop and the planner started:
+Confirm the loop started:
 
 ```bash
-kubectl -n dorgu-system logs deploy/dorgu-operator | grep -i "AI \|health check"
+kubectl -n dorgu-system logs deploy/dorgu-operator | grep -i "health check"
 ```
 
-Look for `AI diagnosis enabled` and `AI remediation planning enabled`. See [AI setup](/operator/configuration/ai-setup) if either is missing.
+Look for `Phase 2a/2b health check and remediation enabled` with the interval. If it is absent, detection is off.
+
+### Step 1b: Optional, turn on AI
+
+<AiOffByDefault />
+
+Everything in this guide works without it. When you do want it, [AI setup](/operator/configuration/ai-setup) is the walkthrough, and the startup lines to look for are `AI diagnosis enabled` and `AI remediation planning enabled`.
 
 ## Step 2: Confirm cluster discovery
 
@@ -144,7 +141,7 @@ The full walkthrough, including breaking an imported app and healing it, is in t
 <Warning>
   **On a brownfield cluster, expect most of these workloads to be owned.** For a Deployment that Helm, ArgoCD, or Flux reconciles, Dorgu detects and diagnoses exactly as it does for anything else, but it is **recommendation only**: it names the owner and tells you what to change in your source of truth rather than patching the Deployment. Patching an owned workload claims those fields away from its owner, and the next `helm upgrade` then fails outright rather than quietly reverting.
 
-  Read [the ownership model](/ownership-model) before your first approval on a real cluster. It also covers the version coupling: **CLI v0.10.0 pairs with operator v0.9.0**, and an older CLI will patch an owned Deployment regardless.
+  Read [the ownership model](/ownership-model) before your first approval on a real cluster. The guard needs **CLI v0.10.0 or newer**: an older CLI ignores the ownership record and patches an owned Deployment regardless. See [versions](/operator/installation#versions).
 </Warning>
 
 ## Step 4: Break something and watch the loop
@@ -156,7 +153,7 @@ Once it is crash-looping, one detection cycle later:
 ```bash
 dorgu incidents list -n demo                       # OOMKilled + CrashLoopBackOff
 dorgu incidents describe <incident-name> -n demo    # root cause, confidence, provider
-dorgu remediation list -n demo                      # one proposal, PLAN: ai-anthropic
+dorgu remediation list -n demo                      # one proposal, PLAN: rule-based
 dorgu remediation diff <remediation-name> -n demo   # the ordered plan, with diffs
 ```
 
@@ -205,5 +202,8 @@ kubectl -n demo get pods
   </Card>
   <Card title="dorgu persona import" icon="download" href="/cli/commands/persona#persona-import">
     Create personas from the Deployments you already run
+  </Card>
+  <Card title="Uninstall" icon="trash" href="/operator/installation#uninstall">
+    Complete teardown. `helm uninstall` on its own leaves your API key behind
   </Card>
 </CardGroup>

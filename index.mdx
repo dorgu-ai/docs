@@ -42,7 +42,7 @@ flowchart LR
     Deterministic rules produce a root cause and a confidence score. They are always on. With your own Anthropic key, Claude enhances the diagnosis with cluster context.
   </Step>
   <Step title="Propose">
-    The AI planner reads your app persona, cluster persona, past incidents, and **which past fixes actually worked**, then returns an ordered plan with a per-step YAML diff. Only persona updates are ever auto-executable.
+    Deterministic rules compute a bounded fix against the live container and return an ordered plan with a per-step YAML diff. That is the default path and needs no key. With the AI planner turned on, Claude writes the plan instead, reading your app persona, cluster persona, past incidents, and **which past fixes actually worked**. Either way the guardrails are the same, only persona updates are ever auto-executable, and every verdict a guardrail reaches is [Dorgu's own arithmetic](/operator/features/self-healing#guardrail-verdicts-as-data).
   </Step>
   <Step title="Approve">
     You review the plan with `dorgu remediation diff` and approve with one command. Approval is required by default.
@@ -63,15 +63,12 @@ flowchart LR
 
 ## Products
 
-<CardGroup cols={3}>
+<CardGroup cols={2}>
   <Card title="Dorgu Operator" icon="heart-pulse" href="/operator/features/self-healing">
     The AI SRE: detects incidents, diagnoses root cause, and proposes reviewable fixes with guardrails.
   </Card>
   <Card title="Dorgu CLI" icon="terminal" href="/cli/quickstart">
-    Review and approve remediations, inspect cluster health — and generate K8s manifests and personas.
-  </Card>
-  <Card title="Dorgu Platform" icon="browser" href="/platform">
-    Web dashboard for ClusterPersona visualization and cluster insights.
+    Review and approve remediations, inspect cluster health, and generate K8s manifests and personas.
   </Card>
 </CardGroup>
 
@@ -84,7 +81,7 @@ flowchart LR
 - **Real guardrails**: a 2× blast-radius cap measured against the live value, no resource keys added that the workload does not set, rate limits, one remediation per incident, `kube-system` deny-listed, automatic rollback on regression
 - **A published permission model**: the operator's ClusterRole in full, with the denied verbs called out, so "it never writes workloads" is checkable rather than asserted
 - **Kubernetes-native memory** — `IncidentMemory` and `RemediationAction` CRDs, so the record lives in your cluster, not a vendor's database
-- **BYO key, optional AI** — Anthropic only, operator-side; everything works rule-based with no key
+- **BYO key, and AI off by default**: Anthropic only, operator-side. The deterministic path is the default and the current recommendation, and it heals on its own. [Why](/operator/configuration/ai-setup#why-it-is-off-and-what-that-costs-you)
 - **ApplicationPersona CRDs** — living identity documents for your apps, and the desired-state record a fix is applied to
 - **Manifest generation** — analyze a Dockerfile, docker-compose file, or source tree and produce Deployment, Service, Ingress, HPA, ArgoCD Application, and CI/CD workflow
 - **Cluster bootstrapping** — an interactive wizard installs cert-manager, ingress-nginx, CloudNativePG, OpenObserve, Argo CD, and External Secrets

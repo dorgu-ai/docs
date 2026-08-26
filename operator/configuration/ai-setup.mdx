@@ -4,8 +4,24 @@ description: "Enable AI diagnosis and AI remediation planning with your own Anth
 ---
 
 import OperatorInstallAI from '/snippets/operator-install-helm-ai.mdx';
+import AiOffByDefault from '/snippets/ai-off-by-default.mdx';
 
-Dorgu's AI features are **optional and bring-your-own-key**. Detection, diagnosis, and rule-based remediation all work with no key at all — the AI layer adds root-cause enhancement and the ordered, multi-step remediation plans described in [Self-healing](/operator/features/self-healing).
+Dorgu's AI features are **optional, off by default, and bring-your-own-key**. Detection, diagnosis, and rule-based remediation all work with no key at all. The AI layer adds root-cause enhancement and the ordered, multi-step remediation plans described in [Self-healing](/operator/features/self-healing).
+
+## Why it is off, and what that costs you
+
+<AiOffByDefault />
+
+There are two knobs, not one, and they are worth separating before you set either:
+
+| Knob | Turns on | What it changes |
+|------|----------|-----------------|
+| `llm.provider=claude` plus a key | **AI diagnosis** | The root cause is re-reasoned with cluster context and recorded as `provider: ai-enhanced`. The plan is still the rule engine's. This is the half that has held up. |
+| `aiRemediation.enabled=true` | **The AI planner** | The model writes the ordered plan, including the numbers, recorded as `planSource: ai-anthropic`. This is the half three clean-room runs have found weaker than the rules, and the half operator `v0.11.0` had to fix before its output could be applied at all. |
+
+<Note>
+  **The guardrails do not care which wrote the plan.** Blast radius, the no-new-keys rule, rate limits, and human approval all apply identically to an AI plan and a rule-based one, and since operator `v0.11.0` a value the model asked for that a guardrail refuses is replaced by one Dorgu computed, recorded on [`spec.steps[].safety`](/cli/architecture/crds#step-safety-fields). Turning the planner on widens what Dorgu will *say*. It does not widen what Dorgu will *do*.
+</Note>
 
 ## What you are opting into
 
@@ -35,6 +51,12 @@ Dorgu's AI features are **optional and bring-your-own-key**. Detection, diagnosi
     <OperatorInstallAI />
 
     This is the [canonical install command](/operator/installation#helm-recommended) plus the four AI flags, which are the only ones AI needs. Detection and metrics-server integration are already on by default; add `--set websocket.enabled=true` if you also want live `dorgu watch` streaming.
+
+    Drop the last flag, `aiRemediation.enabled=true`, for AI diagnosis with rule-written plans. That is the setting the [default](#why-it-is-off-and-what-that-costs-you) recommends, and it is the one to start from.
+
+    <Warning>
+      **`aiRemediation.enabled=true` needs operator `v0.11.0` or newer to be worth setting.** On `v0.10.0` and older, a plan diagnosing a resource change could be persisted with an empty patch and an action type of `notification`, so `dorgu remediation approve` printed "No resource change to apply" and healed nothing. Nine of nine AI-planned remediations were unappliable in clean-room run #4. Check what you are running with `helm list -n dorgu-system` before you turn the planner on. See [versions](/operator/installation#versions).
+    </Warning>
 
     Omitting `--version` resolves the newest published chart. To pin an exact version, see the [installation guide](/operator/installation#pin-a-chart-version).
   </Step>
@@ -67,7 +89,7 @@ Dorgu's AI features are **optional and bring-your-own-key**. Detection, diagnosi
 
 | Value | Default | Description |
 |-------|---------|-------------|
-| `llm.provider` | `""` | `claude` enables Anthropic. Empty disables AI entirely. `gemini` enables AI *diagnosis* only — the remediation planner requires `claude`. |
+| `llm.provider` | `""` | `claude` enables Anthropic. Empty disables AI entirely. `gemini` enables AI *diagnosis* only, since the remediation planner requires `claude`. |
 | `llm.model` | `""` | Model override. Empty uses the provider default (`claude-sonnet-4-6` for the planner). |
 | `llm.existingSecret` | `""` | Name of a pre-created Secret holding the key. **Preferred.** |
 | `llm.existingSecretKey` | `ANTHROPIC_API_KEY` | Key within that Secret |
@@ -104,6 +126,10 @@ To remove the key from the cluster as well:
 ```bash
 kubectl delete secret dorgu-llm -n dorgu-system
 ```
+
+<Warning>
+  **That Secret is yours, not Helm's, so `helm uninstall` will not remove it.** You created it out of band with `kubectl create secret` so the key would never pass through Helm values, and the price of that is that removing the release leaves the key in the cluster. Whether you are turning AI off or removing Dorgu entirely, delete it explicitly. The full teardown, which leads with exactly this, is [Uninstall](/operator/installation#uninstall).
+</Warning>
 
 ## CLI-side LLMs are separate
 

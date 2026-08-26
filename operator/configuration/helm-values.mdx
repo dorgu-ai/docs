@@ -172,15 +172,21 @@ kubectl -n dorgu-system get deploy dorgu-operator \
 
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
-| `llm.provider` | string | `""` | `claude` enables Anthropic. Empty disables AI. `gemini` enables AI *diagnosis* only — the remediation planner requires `claude`. |
+| `llm.provider` | string | `""` | `claude` enables Anthropic. Empty disables AI. `gemini` enables AI *diagnosis* only, since the remediation planner requires `claude`. |
 | `llm.model` | string | `""` | Model override. Empty uses the provider default (`claude-sonnet-4-6` for the planner). |
 | `llm.existingSecret` | string | `""` | Name of a pre-created Secret holding the API key. **Preferred.** |
 | `llm.existingSecretKey` | string | `ANTHROPIC_API_KEY` | Key within that Secret |
-| `llm.apiKey` | string | `""` | Dev only — raw key, requires `createSecret=true` |
+| `llm.apiKey` | string | `""` | Dev only. A raw key, requires `createSecret=true` |
 | `llm.createSecret` | bool | `false` | When true and `apiKey` is set, the chart creates the Secret |
-| `aiRemediation.enabled` | bool | `false` | Maps to `--enable-ai-remediation`. Only takes effect when `llm.provider` is set. |
+| `aiRemediation.enabled` | bool | `false` | Maps to `--enable-ai-remediation`. Only takes effect when `llm.provider` is set. **`false` is also the current recommendation**, not just the default: see [why AI is off](/operator/configuration/ai-setup#why-it-is-off-and-what-that-costs-you). |
 
-The key is always delivered to the pod as the `ANTHROPIC_API_KEY` environment variable via `secretKeyRef` — the chart never passes it as a container argument. See [AI setup](/operator/configuration/ai-setup) for the full walkthrough and the caveat about `llm.apiKey` being visible in `helm get values`.
+Both AI values default off, so a chart installed with no `--set` flags makes no API calls and spends nothing. Rules run either way.
+
+The key is always delivered to the pod as the `ANTHROPIC_API_KEY` environment variable via `secretKeyRef`, and the chart never passes it as a container argument. See [AI setup](/operator/configuration/ai-setup) for the full walkthrough and the caveat about `llm.apiKey` being visible in `helm get values`.
+
+<Warning>
+  A Secret you created yourself with `kubectl create secret`, which is the recommended path, is not part of the Helm release and survives `helm uninstall`. Delete it explicitly: [Uninstall](/operator/installation#uninstall) leads with it.
+</Warning>
 
 ### Bootstrap
 
@@ -251,7 +257,16 @@ When enabled, the chart creates a Service on the specified port.
 | `serviceAccount.name` | string | Release name | Service account name override |
 | `serviceAccount.annotations` | object | `{}` | Service account annotations (e.g., for IRSA) |
 
-## Example: AI self-healing
+## Example: the recommended default
+
+Nothing to set. Detection, rule-based diagnosis, and rule-based remediation are all on, and no key is involved:
+
+```bash
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  --namespace dorgu-system --create-namespace
+```
+
+## Example: opting in to AI
 
 Create the Secret out of band, then:
 
@@ -268,8 +283,11 @@ llm:
   existingSecret: dorgu-llm
   existingSecretKey: ANTHROPIC_API_KEY
 
+# Leave this false for AI root-cause prose with rule-written plans, which is
+# the recommended shape. Setting it true hands the plan to the model, and
+# needs operator v0.11.0 or newer to produce one that can be applied.
 aiRemediation:
-  enabled: true
+  enabled: false
 ```
 
 ## Example: Production deployment

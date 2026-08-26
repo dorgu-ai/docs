@@ -1,0 +1,17 @@
+<Note>
+  **Current versions: CLI `v0.12.0` with operator `v0.11.0`** (Helm chart `0.11.0`; the chart version, the chart `appVersion`, and the operator version are always the same number). Newest of each is always the right answer, and this note is the only place in these docs that states which that is.
+
+  **There is no version pinning between the CLI and the operator.** Every field either side has added is optional and additive, so a half that does not know about a field simply sees it absent and renders exactly as it did before. Nothing has to be upgraded in lockstep.
+
+  Three mismatches change behaviour. Only the first is unsafe, and it is the old **CLI**, not the old operator:
+
+  | Mismatch | What happens |
+  |----------|--------------|
+  | **CLI `v0.9.0` or older against operator `v0.9.0` or newer** | **Upgrade the CLI.** An older CLI never reads `spec.workloadRef`, so `approve` will patch a Deployment that Helm, ArgoCD, or Flux owns and break the owner's next apply. The operator supplies the ownership facts; declining the patch is the CLI's job. This is the one combination that silently does the thing the guard exists to prevent. |
+  | CLI `v0.10.0` or newer against operator `v0.8.1` or older | Conservative rather than dangerous. The operator writes no `workloadRef`, an absent record is treated as owned, and every remediation carrying a workload change is declined with exit `4`. `dorgu remediation approve <name> -n <ns> --no-heal` records the decision until the operator is upgraded. |
+  | CLI `v0.12.0` against operator `v0.10.0` or older | No guardrail verdicts. They are read from the optional [`spec.steps[].safety`](/cli/architecture/crds#step-safety-fields) field that operator `v0.11.0` adds. The field is absent, `remediation list` grows no `GUARDRAIL` column, and every command prints what it printed before. |
+
+  One operator upgrade is worth doing on its own merits, with no CLI implication at all: **with `aiRemediation.enabled=true`, operator `v0.11.0` is the release that made AI-planned remediations appliable.** On `v0.10.0` and older, a plan that diagnosed a resource change could be persisted with nothing to apply. See [AI setup](/operator/configuration/ai-setup).
+
+  Both mismatch directions in full, with the ownership reasoning behind them: [version coupling](/ownership-model#version-coupling). Newest published releases: [CLI](https://github.com/dorgu-ai/dorgu/releases) and [operator](https://github.com/dorgu-ai/dorgu-operator/releases).
+</Note>
