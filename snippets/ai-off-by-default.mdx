@@ -1,0 +1,16 @@
+<Warning>
+  **The AI planner is off by default, and for now that is also the recommendation.** `aiRemediation.enabled` defaults to `false`, `llm.provider` defaults to empty, and the install commands in these docs leave both alone. A default install spends nothing on inference and sends nothing out of your cluster.
+
+  **Rules always run.** Detection, rule-based diagnosis, and rule-based remediation are local, free, deterministic, and are the floor the whole product stands on. They are what the clean-room runs have actually healed with.
+
+  The AI planner is an addition on top of that floor, and across three consecutive clean-room evaluations, meaning a stranger installing from these published docs and nothing else, it has been the weaker path: it invented specifics in the first, wrote a worse plan than the rules in the second, and in the third produced nine remediations of which **none** could change a workload. Operator `v0.11.0` is the release that fixed that last one, and it is too recent to have an evaluation behind it yet.
+
+  This is not a retreat from AI. It is where the two halves have earned their place: **deterministic detection and remediation, with AI for explanation.** The setting that says exactly that is a provider with no planner, which gives you AI root-cause prose while the numbers that reach your cluster stay the rule engine's:
+
+  ```bash
+  --set llm.provider=claude --set llm.existingSecret=dorgu-llm    # AI explains
+  # aiRemediation.enabled stays false                              # rules decide
+  ```
+
+  [AI setup](/operator/configuration/ai-setup) has the full walkthrough for both, and what each one costs you.
+</Warning>

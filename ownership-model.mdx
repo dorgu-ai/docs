@@ -3,6 +3,8 @@ title: "Ownership model"
 description: "Dorgu understands your whole cluster. It only changes the workloads you have handed it."
 ---
 
+import VersionPairing from '/snippets/version-pairing.mdx';
+
 Dorgu understands your whole cluster. It only *changes* what you have explicitly handed it.
 
 For a Deployment that Helm, ArgoCD, or Flux reconciles, Dorgu is **understanding and recommendation only**. It still detects the failure, still diagnoses the root cause, and still tells you exactly which value to change. It will **not** patch the Deployment. Instead it names the owner and shapes the fix as an instruction for that owner's source of truth.
@@ -10,7 +12,7 @@ For a Deployment that Helm, ArgoCD, or Flux reconciles, Dorgu is **understanding
 Those three are named deliberately. All three run a controller and stamp what they reconcile, so their ownership is a fact Dorgu can read off the object. kustomize is not in that list, and the reason is worth reading before you rely on any of this: see [the kustomize limitation](#the-kustomize-limitation).
 
 <Note>
-  **Version requirement.** The ownership record ships in **operator v0.9.0**; the refusal is enforced by **CLI v0.10.0**. They are a matched pair. See [version coupling](#version-coupling) before you upgrade one without the other.
+  **Version requirement.** The ownership record ships in **operator v0.9.0**; the refusal is enforced by **CLI v0.10.0**. Both halves are needed for the guard to hold, and neither has been superseded. Which versions to actually be on, and what every mismatch does: [version coupling](#version-coupling).
 </Note>
 
 <Note>
@@ -354,7 +356,13 @@ Detection, diagnosis, proposal, guardrails, verification, and incident memory al
 
 ## Version coupling
 
-CLI v0.10.0 and operator v0.9.0 are a **matched pair**. A missing `workloadRef` is deliberately treated as owned, which makes both mismatch directions predictable rather than silent.
+<VersionPairing />
+
+The rest of this section is the history behind that note: which release introduced each half of the guard, and what each mismatch actually does. It states no "current" version of its own, so there is one place in these docs to correct when a release lands.
+
+### The ownership guard: CLI v0.10.0 with operator v0.9.0
+
+A missing `workloadRef` is deliberately treated as owned, which makes both mismatch directions predictable rather than silent.
 
 | Combination | What happens |
 |-------------|--------------|
@@ -366,13 +374,27 @@ CLI v0.10.0 and operator v0.9.0 are a **matched pair**. A missing `workloadRef` 
   Of the two mismatches, **CLI ≤ v0.9.0 against operator v0.9.0 is the dangerous one**. The other direction is merely conservative: it declines things it could have patched. This one silently does the thing the guard exists to prevent.
 </Warning>
 
-**CLI v0.11.0 and operator v0.10.0 are the current matched pair,** and the two halves of the footprint fix are independent rather than coupled. Neither requires the other to run, and there is no dangerous mismatch between them, only a partial one.
+### The field-manager footprint: CLI v0.11.0 with operator v0.10.0
+
+The two halves of the footprint fix are independent rather than coupled. Neither requires the other to run, and there is no dangerous mismatch between them, only a partial one.
 
 | Combination | What happens |
 |-------------|--------------|
 | **CLI v0.11.0 + operator v0.10.0** | Correct. A heal leaves no field-manager entry, and a foreign `Update`-op owner of a container's `resources` is recognised as ownership. |
 | **CLI v0.11.0 + operator v0.9.0** | The footprint is still stripped, so a healed workload stays safe to bring under Helm, ArgoCD, or Flux. But the operator still counts `Apply`-op managers only, so a workload whose `resources` are held by a foreign `Update`-op manager reads `unmanaged` and is patched. |
 | **CLI v0.10.0 + operator v0.10.0** | Ownership is classified correctly, but a heal on an `unmanaged` workload still leaves a `kubectl-patch` entry owning the fields it wrote, so a later `helm upgrade` or server-side apply conflicts with it. This is the case worth upgrading out of. |
+
+### Guardrail verdicts: CLI v0.12.0 with operator v0.11.0
+
+Not coupled at all, and worth saying so explicitly, because it is the pair a reader is most likely to assume needs pinning. Operator v0.11.0 records what its guardrails decided on the optional [`spec.steps[].safety`](/cli/architecture/crds#step-safety-fields) field; CLI v0.12.0 prints it. Either half runs alone.
+
+| Combination | What happens |
+|-------------|--------------|
+| **CLI v0.12.0 + operator v0.11.0** | Verdicts are printed as Dorgu's own arithmetic in `remediation diff`, in the approve and heal preview, and in the owned-workload refusal, which is the reader who most needs to know that a ceiling was Dorgu's and not the plan's. |
+| **CLI v0.12.0 + operator ≤ v0.10.0** | The field is absent, so no guardrail block is printed, `remediation list` grows no `GUARDRAIL` column, and `--json` gains no `safety` key. Every command renders exactly as it did before. |
+| **CLI ≤ v0.11.0 + operator v0.11.0** | The operator writes the field and the CLI ignores it. Nothing is lost that was previously shown: the operator also writes the verdict into the step's description, so the refusal still reaches the reader, just as prose rather than under a heading with the numbers beside it. |
+
+The reason this one exists at all is a reporting failure rather than a safety failure. The verdict used to be spliced onto the front of the model's `rationale` as `[safety:blast-radius] …`, which in clean-room run #4 put Dorgu's measurement one line below the model's own claim that the same 16x change was "well within a 2x ceiling", with nothing to tell the reader which of the two had been computed.
 
 ## Trying it
 

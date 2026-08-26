@@ -372,6 +372,7 @@ Each entry in `steps[]`:
 | `command` | string | An optional ready-to-run `kubectl` command for an advisory step. **Never executed** by the operator or the CLI. Sanitized before storage and re-checked before display. Operator v0.8.0+. |
 | `patch` | object | JSON merge patch for the Persona spec (`persona-update` steps) |
 | `prePatchState` | object | Snapshot of the fields before the patch, used for rollback |
+| `safety[]` | array | Guardrail verdicts on this step, one entry per field a guardrail ruled on. Optional; absent means no guardrail ruled. Operator v0.11.0+. See [step safety fields](#step-safety-fields). |
 
 <Warning>
   `autoExecutable` may only be `true` on a `persona-update` step. This is enforced at the Kubernetes API server by a CEL validation rule on the CRD (`!self.autoExecutable || self.type == 'persona-update'`), not just in operator code. Every other step type is advisory, which is what preserves the operator's guarantee that it never writes workloads.
@@ -380,6 +381,82 @@ Each entry in `steps[]`:
 <Note>
   **On an owned workload, steps are reshaped before they are persisted.** Where `workloadRef.managedBy` is anything but `unmanaged`, the operator drops the `command` from any step whose command writes to the cluster, rewrites `description` as what to change at the source (chart values for a Helm release, the Git manifests for an ArgoCD application), and appends one line to `rationale` on what a direct patch would have broken. Read-only commands such as `kubectl logs` survive. `persona-update` steps are never reshaped. See [what changes about the plan](/ownership-model#what-changes-about-the-plan).
 </Note>
+
+### Step Safety Fields
+
+New in **operator v0.11.0**. Each entry in `steps[].safety` is one guardrail's verdict on one field of that step.
+
+<Warning>
+  **Every value in this field is Dorgu's own arithmetic. No part of it comes from a model, and the model is not permitted to characterise a guardrail's verdict at all.** That is why the field exists rather than being a sentence.
+
+  It replaces a `[safety:blast-radius] …` prefix that used to be spliced onto the front of `rationale`, a string the AI planner authors. A computed refusal therefore read as part of the model's reasoning, one line below the model's own claim that the same 16x change was "well within a 2x ceiling", and nothing on the screen distinguished the measurement from the assertion. A verdict is not the plan's to give, so it no longer arrives inside the plan's prose.
+</Warning>
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `rule` | enum | Yes | Which guardrail ruled: `blast-radius`, `plan-validation`, or `absent-field` |
+| `verdict` | enum | Yes | What happened to the requested value: `clamped`, `rejected`, or `derived` |
+| `field` | string | Yes | The persona-spec path ruled on, for example `spec.resources.limits.memory` |
+| `baseline` | string | No | The value the guardrail measured against: the **live workload's** value where it could be read, the persona's otherwise. Empty when the rule measured no change, since a derived patch has nothing to compare. |
+| `requested` | string | No | The value the plan asked for. Empty when the plan named a change without giving a value. |
+| `permitted` | string | No | The value that will actually be applied, and **exactly what the step's patch carries**. Empty means nothing will be applied for this field. |
+| `ratio` | string | No | The requested change as a multiple of `baseline`, for example `16.0x` |
+| `maxRatio` | string | No | The largest multiple the guardrail allows, for example `2.0x` |
+| `message` | string | Yes | Dorgu's one-line rendering of the verdict, ready to print |
+
+#### `rule`
+
+| Value | The guardrail |
+|-------|---------------|
+| `blast-radius` | The cap on how far one remediation may move a resource value in a single step: 2x the live container value for an increase, 50% for a decrease. |
+| `absent-field` | A remediation may move a resource key the workload already sets but may never introduce one it does not. Recorded here alongside the prose it already produced. |
+| `plan-validation` | The check that a plan diagnosing a resource change actually carries a patch that can be applied. |
+
+#### `verdict`
+
+| Value | Meaning |
+|-------|---------|
+| `clamped` | The guardrail refused the requested value and Dorgu substituted one it permits. `permitted` is what the patch carries, so the diff shows what will really happen. |
+| `rejected` | The guardrail refused the requested value and nothing replaces it. **The field is removed from the step's patch**, so it appears in no diff, and this entry is the only record that it was asked for. |
+| `derived` | The plan named a change but carried no patch Dorgu could apply, so Dorgu computed the value itself from the live workload rather than persisting a fix that applies nothing. |
+
+```yaml
+spec:
+  steps:
+    - order: 1
+      type: persona-update
+      autoExecutable: true
+      patch:
+        spec:
+          resources:
+            limits:
+              memory: 512Mi          # what `permitted` says, not what `requested` says
+      safety:
+        - rule: blast-radius
+          verdict: clamped
+          field: spec.resources.limits.memory
+          baseline: 256Mi
+          requested: 4Gi
+          permitted: 512Mi
+          ratio: 16.0x
+          maxRatio: 2.0x
+          message: "Blast-radius guardrail: the plan asked to set spec.resources.limits.memory to 4Gi, ..."
+        - rule: absent-field
+          verdict: rejected
+          field: spec.resources.limits.cpu
+          requested: 500m
+          message: 'Left out: container "checkout" on checkout does not set cpu today, ...'
+```
+
+<Note>
+  **Optional and additive, so nothing has to migrate.** `safety` is absent on every object an operator older than v0.11.0 wrote, and absent means no guardrail ruled. A client that does not know the field renders exactly as it did before and gains no `safety` key in JSON output. There is no version pinning between the CLI and the operator on account of it: see [guardrail verdicts](/ownership-model#guardrail-verdicts-cli-v0120-with-operator-v0110).
+</Note>
+
+<Note>
+  **A step with no patch is removed from the plan; a step whose patch a guardrail emptied is kept.** The difference is what the object is for. A `persona-update` step carrying no patch applies nothing and instructs nobody, since updating the ApplicationPersona is Dorgu's own job, and it is what used to render as `(no changes)` underneath a plan that read like a fix. A step a guardrail emptied carries the record of which field was refused and why, which is the difference between a step that explains an absence and a step that is one.
+</Note>
+
+How the CLI prints these: [guardrail verdicts](/cli/commands/remediation#guardrail-verdicts). How they are produced: [guardrail verdicts as data](/operator/features/self-healing#guardrail-verdicts-as-data).
 
 ### Status Fields
 

@@ -1,10 +1,10 @@
 ---
 title: Quickstart
-description: Break an app and watch Dorgu diagnose and heal it — in under 15 minutes
+description: Break an app and watch Dorgu diagnose and heal it, in under 15 minutes
 ---
 
 import CliInstall from '/snippets/cli-install.mdx';
-import OperatorInstallAI from '/snippets/operator-install-helm-ai.mdx';
+import AiOffByDefault from '/snippets/ai-off-by-default.mdx';
 
 This is the fastest path to seeing Dorgu work: install it, deliberately deploy an app with too little memory, and watch the loop detect the OOM, diagnose it, propose a fix, and heal the workload once you approve.
 
@@ -12,7 +12,7 @@ This is the fastest path to seeing Dorgu work: install it, deliberately deploy a
   **Prerequisites:**
   - A Kubernetes cluster you can install into, and `kubectl` pointed at it. Every Dorgu cluster command shells out to `kubectl`.
   - Helm 3
-  - An Anthropic API key — optional. Without one, everything below still works; the plan comes back rule-based instead of AI-written.
+  - **No API key.** This walkthrough runs entirely on Dorgu's deterministic path, which is the recommended default. AI is an opt-in addition covered in [step 2b](#2b-optional-turn-on-ai).
 </Info>
 
 <Warning>
@@ -31,19 +31,16 @@ See [installation](/cli/installation) for pinned versions, checksums, and Window
 
 ## 2. Install the operator
 
-Detection is on out of the box, so the base install is enough to start the loop. The AI flags below are the optional half.
+Detection and rule-based remediation are on out of the box, so this is the whole install. No key, no flags beyond a tighter loop for the demo.
 
 ```bash
-kubectl create namespace dorgu-system
-
-# Optional — enables AI diagnosis and AI-written plans
-kubectl create secret generic dorgu-llm -n dorgu-system \
-  --from-literal=ANTHROPIC_API_KEY=sk-ant-...
+helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  --namespace dorgu-system \
+  --create-namespace \
+  --set healthCheck.interval=30s
 ```
 
-<OperatorInstallAI />
-
-Drop the four `llm`/`aiRemediation` flags if you are running without a key. `healthCheck.interval=30s` just tightens the demo loop; the default is 60s.
+`healthCheck.interval=30s` only tightens the demo loop; the default is 60s. Everything below heals on this install.
 
 ```bash
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=dorgu-operator \
@@ -51,7 +48,7 @@ kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=dorgu-operator 
 ```
 
 <Note>
-  **Failure detection is enabled by default** as of chart 0.8.0, so there is no flag to remember. To run the operator without it, install with `--set healthCheck.enabled=false`. AI is the opposite: always an explicit opt-in, because it costs money and sends incident context to Anthropic. See [AI setup](/operator/configuration/ai-setup) for verifying that the AI planner started.
+  **Failure detection is enabled by default** as of chart 0.8.0, so there is no flag to remember. To run the operator without it, install with `--set healthCheck.enabled=false`.
 </Note>
 
 The operator auto-creates a `ClusterPersona` named `dorgu-cluster` on startup and discovers your nodes, add-ons, and capacity:
@@ -63,6 +60,26 @@ dorgu health
 <Tip>
   **Installing onto a cluster that already has apps?** Steps 3 to 7 deploy a toy app to demonstrate the loop. If you want Dorgu working on the workloads you already run, read [Brownfield: a cluster that already has apps](#brownfield-a-cluster-that-already-has-apps) instead. `dorgu health` has already told you which Deployments it cannot see.
 </Tip>
+
+### 2b. Optional: turn on AI
+
+Skip this on a first run. The rest of this walkthrough does not need it, and the deterministic path is the one to see working first.
+
+<AiOffByDefault />
+
+If you do want the AI root-cause prose while you are here:
+
+```bash
+kubectl create secret generic dorgu-llm -n dorgu-system \
+  --from-literal=ANTHROPIC_API_KEY=sk-ant-...
+
+helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  -n dorgu-system --reuse-values \
+  --set llm.provider=claude \
+  --set llm.existingSecret=dorgu-llm
+```
+
+That gives you AI diagnosis with the rule engine still writing the plan. Adding `--set aiRemediation.enabled=true` hands the plan to the model as well, and needs **operator v0.11.0 or newer** to produce a plan that can actually be applied. [AI setup](/operator/configuration/ai-setup) covers both, including how to confirm which of the two started.
 
 ## 3. Deploy an app that will break
 
@@ -166,7 +183,7 @@ You will see incidents for `OOMKilled` and `CrashLoopBackOff`. Two symptoms, one
 dorgu incidents describe <incident-name> -n demo
 ```
 
-The **Root Cause** section carries the summary, the confidence score, and the provider — `ai-enhanced` when Claude ran, `rule-based` otherwise.
+The **Root Cause** section carries the summary, the confidence score, and the provider: `rule-based` on this install, `ai-enhanced` if you enabled a provider in [step 2b](#2b-optional-turn-on-ai).
 
 ## 5. Review the proposed fix
 
@@ -174,7 +191,7 @@ The **Root Cause** section carries the summary, the confidence score, and the pr
 dorgu remediation list -n demo
 ```
 
-One row, with `PLAN: ai-anthropic` if AI planning is on. Now read the actual plan:
+One row, reading `PLAN: rule-based`, or `ai-anthropic` if you enabled the planner in [step 2b](#2b-optional-turn-on-ai). Now read the actual plan:
 
 ```bash
 dorgu remediation diff <remediation-name> -n demo
@@ -211,9 +228,13 @@ The records persist in your cluster. Next time a similar problem appears, the pl
 
 ## Clean up
 
+The demo app and its persona:
+
 ```bash
 kubectl delete namespace demo
 ```
+
+Removing Dorgu itself takes more than `helm uninstall`, which leaves the five CRDs, every record in every namespace, and any API key Secret you created. The complete teardown, in order, is [Uninstall](/operator/installation#uninstall).
 
 ## Brownfield: a cluster that already has apps
 
@@ -321,7 +342,16 @@ Dorgu only watches workloads that have an `ApplicationPersona`. Without one, a b
 `dorgu persona import` requires CLI **v0.9.0** or newer. See [`dorgu persona import`](/cli/commands/persona#persona-import) for every flag.
 
 <Warning>
-  **The ownership guard needs CLI v0.10.0 and operator v0.9.0 together.** The operator records who owns each Deployment in `spec.workloadRef`; the CLI is what refuses to patch an owned one. An older CLI against a v0.9.0 operator ignores the record and patches anyway, which is exactly the `helm upgrade` breakage the guard exists to prevent. Check both with `dorgu version` and `helm list -n dorgu-system`. See [version coupling](/ownership-model#version-coupling).
+  **The ownership guard needs CLI v0.10.0 or newer.** The operator records who owns each Deployment in `spec.workloadRef` from v0.9.0 onward; the CLI is what refuses to patch an owned one. An older CLI ignores the record and patches anyway, which is exactly the `helm upgrade` breakage the guard exists to prevent, and it is the only version mismatch between the two halves that is genuinely unsafe.
+
+  Check both before your first approval on a real cluster:
+
+  ```bash
+  dorgu version
+  helm list -n dorgu-system
+  ```
+
+  Which versions to be on, and what every other mismatch does: [versions](/cli/installation#versions).
 </Warning>
 
 ## Also: generate manifests

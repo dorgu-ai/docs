@@ -144,7 +144,25 @@ The `ApplicationPersona` is a point-in-time record, and on a brownfield cluster 
 - **A remediation may only change a resource key the workload already sets.** `observedResources` distinguishes absent from zero, so approving a memory fix can no longer silently introduce a CPU limit the Deployment never had. The rule-based path refuses and says why; the AI path drops the offending patch leaf, records the omission in the step rationale, and demotes a step whose patch is emptied by the pruning.
 - **The planner may only name versions Dorgu has actually read**, from the `dorgu.io/imported-image` annotation and `status.deployments`. It can no longer invent a prior-good image tag.
 
-With AI remediation planning enabled, the planner assembles the context it sends to Claude:
+### The default path is deterministic
+
+By default, and on the current recommendation, the **rule-based proposer** writes the plan and emits `planSource: rule-based`. It handles the resource-adjustment path, which is the OOM and saturation cases, computing a bounded increase against the live container value. It needs no key, makes no API call, and is what the clean-room runs have actually healed with.
+
+The AI planner is opt-in on top of that, behind `llm.provider` and `aiRemediation.enabled`. [Why AI is off by default](/operator/configuration/ai-setup#why-it-is-off-and-what-that-costs-you) is the honest version of that trade, including the three runs where the rules came out ahead.
+
+<Note>
+  **Since operator v0.11.0, an AI plan that diagnoses a resource change is appliable or it is not written.** Before it, the planner could describe a memory fix as `workload-apply` steps, which the CRD forbids from ever being auto-executable, and give its one `persona-update` step no patch. The resulting object read like a fix and applied nothing.
+
+  Now, after the guardrails run, such a plan either carries a patch that can be applied or Dorgu supplies the value itself, using the same conservative arithmetic the rule-based path uses, measured against the live workload. Where Dorgu cannot make it appliable the plan is refused outright and the rule-based proposal takes over, recorded as `planSource: rule-based` so it is auditable as what it is.
+
+  **The plan keeps the model's root cause; the number that reaches your cluster is the rule engine's.** Every substitution is recorded on [`spec.steps[].safety`](#guardrail-verdicts-as-data) with the verdict `derived`, so it never has to be inferred from prose.
+
+  One exemption is deliberate. Where Dorgu's own rule engine declines to size a change, the advisory plan stands: a container that sets no CPU limit today means raising one would introduce a field the workload has never had, so the rule-based path would produce nothing either. A plan that says exactly that is worth more than no plan.
+</Note>
+
+### With the AI planner enabled
+
+The planner assembles the context it sends to Claude:
 
 - A **`## Live workload (ground truth, read from the cluster just now)`** section, ahead of the persona: the observed container, its resources, and its image
 - The affected **ApplicationPersona**, spec *and* status, including the learned resource baselines, explicitly labelled a stale snapshot
@@ -160,8 +178,6 @@ For an owned workload the plan is then reshaped for its owner: see [what changes
   **Only `persona-update` steps may be auto-executable.** This is enforced at the Kubernetes API server by a CEL validation rule on the CRD, not merely in operator code. `workload-apply`, `restart`, `scale`, `config-change`, and `manual` steps are advisory — recorded for a human, the CLI, or your pipeline to act on. No plan can escalate itself.
 </Note>
 
-Without a key, or with `aiRemediation.enabled=false`, the deterministic proposer runs instead and emits `planSource: rule-based`. It handles the resource-adjustment path — the OOM and saturation cases.
-
 Read the resulting plan with [`dorgu remediation diff`](/cli/commands/remediation#remediation-diff).
 
 ## Guardrails
@@ -172,6 +188,7 @@ Every proposal passes the safety checker before it is created.
 |-----------|-------|
 | Blast radius | Resource increases capped at **2× the live container value**; decreases capped at 50%. Measured against `workloadRef.observedResources`, never against the persona. |
 | No new keys | A remediation may only change a resource key the container **already sets**. Approving a memory fix cannot silently add a CPU limit. |
+| Verdicts are recorded | Whenever a guardrail rules on a field, what it decided is written to `spec.steps[].safety` as structured data, in Dorgu's own numbers. See [guardrail verdicts as data](#guardrail-verdicts-as-data). |
 | Workload ownership | The CLI patches the Deployment only when `workloadRef.managedBy` is `unmanaged`. See [the ownership model](/ownership-model). |
 | Rate limit | **5 remediations per persona per hour** (override with `policies.selfHealing.maxRemediationsPerHour`) |
 | Concurrency | **One active remediation per persona** — a second is skipped while one is `Approved`, `Applying`, or `Verifying` |
@@ -181,6 +198,59 @@ Every proposal passes the safety checker before it is created.
 | Approval | **Required by default.** Every proposal is created with `approval.required: true` and phase `Pending`. |
 | Deduplication | One remediation per incident, and one per persona-plus-target — so an OOM that also trips a crash-loop yields **two incidents but one fix** |
 | Rollback | Automatic. The operator restores `prePatchState` when verification finds the health degraded. |
+
+### Guardrail verdicts as data
+
+New in **operator v0.11.0**: when a guardrail rules on a field, what it decided is recorded as structured data on `spec.steps[].safety` rather than written into a sentence.
+
+**Every value in that field is Dorgu's own arithmetic. None of it comes from a model, and the model is not permitted to comment on a cap at all.** That is the entire point of the field, and it exists because of a specific failure. The verdict used to be spliced onto the front of the step's `rationale` as `[safety:blast-radius] …`, which put Dorgu's measurement one line below the model's own claim that the same 16x change was "well within a 2x ceiling", with nothing on the screen to tell a reader which of the two had been computed. A person deciding whether to approve a change to a running workload should not have to work that out from the phrasing.
+
+Each entry names one field and carries the rule, the verdict, the baseline it measured against, what the plan asked for, what will actually be applied, the ratio, the ceiling, and a message Dorgu wrote:
+
+```yaml
+spec:
+  steps:
+    - order: 1
+      type: persona-update
+      safety:
+        - rule: blast-radius
+          verdict: clamped
+          field: spec.resources.limits.memory
+          baseline: 256Mi          # the live container, not the persona
+          requested: 4Gi           # what the plan asked for
+          permitted: 512Mi         # what the patch actually carries
+          ratio: 16.0x
+          maxRatio: 2.0x
+          message: "Blast-radius guardrail: the plan asked to set ..."
+```
+
+| Verdict | What happened to the value the plan asked for |
+|---------|-----------------------------------------------|
+| `clamped` | The guardrail refused it and Dorgu substituted one it permits. The step's patch carries the permitted value, so the diff shows what will really happen. |
+| `rejected` | The guardrail refused it and nothing replaces it. **The field is removed from the step's patch**, so it appears in no diff, and this record is the only place a reader learns it was asked for at all. |
+| `derived` | The plan named a change but carried no patch Dorgu could apply, so Dorgu computed the value itself from the live workload rather than persisting a fix that applies nothing. |
+
+| Rule | The guardrail that ruled |
+|------|--------------------------|
+| `blast-radius` | The cap on how far one remediation may move a value in a single step: 2x the live container value for an increase, 50% for a decrease. |
+| `absent-field` | A remediation may move a resource key the workload already sets but may never introduce one it does not. The rule is not new; recording it as data beside the prose it already produced is. |
+| `plan-validation` | The check that a plan diagnosing a resource change actually carries something appliable. |
+
+Three consequences follow, and each of them was a defect before:
+
+- **A refused field is gone from the patch**, so no diff and no owner instruction can advertise a change that will not happen. The plan used to keep the refused value while the step was demoted to advisory, and the diff went on offering `8Mi -> 128Mi` to a reader who would have got nothing.
+- **The owner instruction is built after the guardrails, not before.** It quotes concrete values out of the patches, so building it first told a Helm user to put the refused value into their values file.
+- **Every field that breaches the cap is reported, in a stable order.** The check used to return the first breach it happened across while ranging over a map, so a plan moving two fields too far named one at random and silently ignored the other.
+
+The CLI prints all of this under its own heading, away from any sentence a model may have authored, in `dorgu remediation diff`, in the approve and heal preview, and in the owned-workload refusal. See [what the CLI shows](/cli/commands/remediation#guardrail-verdicts) and the [field reference](/cli/architecture/crds#step-safety-fields).
+
+<Warning>
+  **The 2x cap anchors to the live value, so an app that has drifted far below its recorded intent cannot be restored in one step.** After a drift down to 8Mi the largest permitted step is 16Mi, which may still be too little. Dorgu says so in the verdict and in the plan summary rather than implying the fix is complete. Moving the anchor to the persona's recorded intent would weaken the guardrail in exactly the case where the persona is the thing that is stale, so the anchor is deliberately unchanged. Approve the capped step, let it verify, and the next proposal measures from the new live value.
+</Warning>
+
+<Note>
+  **Optional and additive.** `safety` is absent on every object written by an operator older than v0.11.0, and absent means no guardrail ruled. A CLI that does not know the field renders exactly as it did before, and no migration is needed. See [guardrail verdicts](/ownership-model#guardrail-verdicts-cli-v0120-with-operator-v0110).
+</Note>
 
 <Note>
   **Rejecting no longer costs you money 30 seconds later.** A `Rejected` action used to count as terminal and therefore non-blocking, so the next health-check cycle proposed the same fix again, including another billable planning call. The remediation controller now stamps a `Rejected` condition once, on first sight of the phase, and the health-check reconciler consults that history **before** calling the proposer.
@@ -258,9 +328,10 @@ See the [trust model](/cli/architecture/trust-model) for how the levels are mean
 | A label on the Deployment | **No** | Nothing. Resolution walks a fallback chain (below) and pod-template-only labelling resolves fine. |
 | A resolvable Deployment | **Yes** for grounding and for healing | Facts fall back to the persona with a drift warning, `managedBy` is `unknown`, advisory `kubectl` commands are dropped, and the heal is declined. |
 | CLI v0.10.0 or newer | **Yes** for the ownership guard | An older CLI ignores `workloadRef` and will patch a Deployment that Helm or ArgoCD owns. |
+| CLI v0.12.0 with operator v0.11.0 | No | The printed [guardrail verdicts](#guardrail-verdicts-as-data). Absent on either older half, and everything renders as it did before. |
 | metrics-server | No | Container-level CPU/memory usage and saturation signals. OOM and crash-loop detection still work. |
 | Prometheus | No | Learned resource baselines in `status.learned.resourceBaseline`, which the AI uses to size fixes |
-| Anthropic API key | No | AI diagnosis and AI ordered plans. Rule-based detection, diagnosis, and remediation all still work. |
+| Anthropic API key | No, and **off by default** | AI diagnosis and AI ordered plans. Rule-based detection, diagnosis, and remediation are the default path and heal on their own. [Why AI is off](/operator/configuration/ai-setup#why-it-is-off-and-what-that-costs-you). |
 | WebSocket | No | Live `dorgu watch remediations` streaming |
 
 ### How a persona finds its Deployment
@@ -452,7 +523,44 @@ Two rules bound it. Only personas in the **signal's own namespace** are consider
   </Accordion>
 
   <Accordion title="Plans come back rule-based when AI is enabled">
-    The AI planner degrades to the deterministic rules on any failure and logs `AI remediation planning failed, falling back to rules` with the error. Check that the operator can reach the Anthropic API (egress and NAT), that the key is valid, and that the startup log includes `AI remediation planning enabled`. See [AI setup](/operator/configuration/ai-setup).
+    Two causes now, and the second is not a fault.
+
+    **A planner failure.** The AI planner degrades to the deterministic rules on any error and logs `AI remediation planning failed, falling back to rules` with the reason. Check that the operator can reach the Anthropic API (egress and NAT), that the key is valid, and that the startup log includes `AI remediation planning enabled`. See [AI setup](/operator/configuration/ai-setup).
+
+    **A plan Dorgu refused to persist.** Since operator v0.11.0, a plan that diagnoses a resource change but carries nothing appliable is rejected in favour of the rule-based proposal rather than written as a fix that applies nothing. `planSource: rule-based` is then the correct and auditable record of what actually happened. This is working as intended, and it is strictly better than the alternative it replaced. See [the default path](#the-default-path-is-deterministic).
+  </Accordion>
+
+  <Accordion title="Approve prints &quot;No resource change to apply&quot; on a plan that reads like a fix">
+    **Upgrade the operator to v0.11.0 or newer.** This is the exact shape of the blocker clean-room run #4 found: with AI enabled, the planner described the memory fix as `workload-apply` steps, which the CRD's CEL rule forbids from ever being auto-executable, and gave its one `persona-update` step no patch at all. `spec.action.type` came out `notification`, `approve` had nothing to do, and the pod was still in `CrashLoopBackOff` 42 minutes later. Nine of nine AI-planned remediations were unappliable.
+
+    ```bash
+    helm list -n dorgu-system                        # what am I running?
+    kubectl get remediationaction <name> -n <ns> \
+      -o jsonpath='{.spec.action.type}{"\n"}'        # notification is the symptom
+    ```
+
+    Until you can upgrade, run rules only. They were healing the identical app on the first try throughout:
+
+    ```bash
+    helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+      -n dorgu-system --reuse-values --set aiRemediation.enabled=false
+    ```
+
+    An advisory plan that legitimately has nothing to apply is a different thing and says so plainly. See [advisory plans](/cli/commands/remediation#advisory-plans).
+  </Accordion>
+
+  <Accordion title="A step's diff is smaller than the plan's own summary implied">
+    A guardrail ruled on one of its fields. Since operator v0.11.0 the field a guardrail refused is **removed from the step's patch**, precisely so no diff can advertise a change that will not happen, which means the diff is the smaller and more honest of the two numbers.
+
+    Read what was decided and why:
+
+    ```bash
+    dorgu remediation diff <name> -n <ns>
+    kubectl get remediationaction <name> -n <ns> \
+      -o jsonpath='{.spec.steps[*].safety}{"\n"}'
+    ```
+
+    Every value there is Dorgu's own arithmetic. See [guardrail verdicts as data](#guardrail-verdicts-as-data). On an operator older than v0.11.0 the field is absent and the verdict reaches you only as prose in the step's rationale.
   </Accordion>
 </AccordionGroup>
 

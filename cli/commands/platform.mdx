@@ -1,7 +1,17 @@
 ---
 title: dorgu platform serve
-description: Start the Dorgu web UI dashboard
+description: Start the v0 web dashboard. Deprecated, and being replaced.
 ---
+
+<Warning>
+  **Deprecated.** `dorgu platform serve` starts the **v0** dashboard: a read-only view of `ClusterPersona` resources, written before the self-healing loop existed. It knows nothing about incidents, remediations, or approvals, which is now most of what Dorgu does.
+
+  It is being replaced by a rebuilt dashboard, `dorgu-platform-v1`, which is **not released yet**. There is nothing to install and nothing to point you at until it is, and these docs will not describe it before then. Two documented dashboards is worse than one.
+
+  The command still ships and still works. Nothing has been removed from the CLI. What has been removed is the eleven pages of documentation that described the v0 dashboard as a product, because they were describing something that is on its way out. This page is what remains, and it is deliberately just the flags.
+
+  **Everything the loop does is on the CLI**, which is the supported surface: [`dorgu health`](/cli/commands/health), [`dorgu incidents`](/cli/commands/incidents), and [`dorgu remediation`](/cli/commands/remediation).
+</Warning>
 
 ## Synopsis
 
@@ -9,9 +19,7 @@ description: Start the Dorgu web UI dashboard
 dorgu platform serve [flags]
 ```
 
-Start a local web UI dashboard for visualizing ClusterPersona resources. The server watches ClusterPersona resources in the connected Kubernetes cluster and broadcasts real-time updates to the browser via WebSocket.
-
-Once started, the dashboard is available at `http://localhost:PORT` (default port 8080).
+Starts a local web UI that visualizes `ClusterPersona` resources. The server watches them in the connected cluster and pushes updates to the browser over WebSocket. Once started, the dashboard is at `http://localhost:PORT`, port 8080 by default.
 
 ## Flags
 
@@ -24,26 +32,41 @@ Once started, the dashboard is available at `http://localhost:PORT` (default por
 
 ## Examples
 
-**Start the dashboard on the default port:**
 ```bash
+# Default port
 dorgu platform serve
-```
 
-**Start on a custom port:**
-```bash
+# A custom port
 dorgu platform serve --port 3000
-```
 
-**Use a specific kubeconfig and context:**
-```bash
+# A specific kubeconfig and context
 dorgu platform serve --kubeconfig ~/.kube/staging.yaml --context staging-cluster
-```
 
-**Enable verbose logging for debugging:**
-```bash
+# Verbose logging, for debugging
 dorgu platform serve --verbose
 ```
 
-<Info>
-  The platform is in early development. Features and UI are subject to change.
-</Info>
+## What it does not show
+
+Worth stating plainly, because the gap is the reason it is deprecated:
+
+| Not in the v0 dashboard | Read it here instead |
+|-------------------------|----------------------|
+| Incidents and their root-cause diagnoses | [`dorgu incidents`](/cli/commands/incidents) |
+| Proposed remediations, their plans, and their diffs | [`dorgu remediation diff`](/cli/commands/remediation#remediation-diff) |
+| Guardrail verdicts on a plan | [`dorgu remediation diff`](/cli/commands/remediation#guardrail-verdicts) |
+| Approving or rejecting anything | [`dorgu remediation approve`](/cli/commands/remediation#remediation-approve) |
+| Which workloads have no persona and are therefore unwatched | [`dorgu health`](/cli/commands/health) |
+
+<Note>
+  Approval was never in the dashboard and is not a gap to be closed casually. Approving a remediation writes to a running workload with your credentials, so the review surface it happens on has to show the plan, the diff, the owner, and Dorgu's own guardrail verdicts together. That is what `dorgu remediation diff` does today.
+</Note>
+
+<CardGroup cols={2}>
+  <Card title="dorgu health" icon="stethoscope" href="/cli/commands/health">
+    Cluster health, saturation, and what Dorgu cannot see
+  </Card>
+  <Card title="dorgu remediation" icon="terminal" href="/cli/commands/remediation">
+    The supported review and approval surface
+  </Card>
+</CardGroup>

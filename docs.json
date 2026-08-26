@@ -120,41 +120,6 @@
             ]
           }
         ]
-      },
-      {
-        "tab": "Platform",
-        "groups": [
-          {
-            "group": "Getting Started",
-            "pages": [
-              "platform/index",
-              "platform/installation",
-              "platform/quickstart"
-            ]
-          },
-          {
-            "group": "Features",
-            "pages": [
-              "platform/features/dashboard",
-              "platform/features/cluster-detail",
-              "platform/features/real-time"
-            ]
-          },
-          {
-            "group": "API Reference",
-            "pages": [
-              "platform/api/rest",
-              "platform/api/websocket"
-            ]
-          },
-          {
-            "group": "Architecture",
-            "pages": [
-              "platform/architecture/overview",
-              "platform/development"
-            ]
-          }
-        ]
       }
     ],
     "global": {
@@ -189,6 +154,19 @@
       "href": "/cli/quickstart"
     }
   },
+  "redirects": [
+    { "source": "/platform", "destination": "/cli/commands/platform" },
+    { "source": "/platform/index", "destination": "/cli/commands/platform" },
+    { "source": "/platform/installation", "destination": "/cli/commands/platform" },
+    { "source": "/platform/quickstart", "destination": "/cli/commands/platform" },
+    { "source": "/platform/development", "destination": "/cli/commands/platform" },
+    { "source": "/platform/features/dashboard", "destination": "/cli/commands/platform" },
+    { "source": "/platform/features/cluster-detail", "destination": "/cli/commands/platform" },
+    { "source": "/platform/features/real-time", "destination": "/cli/commands/platform" },
+    { "source": "/platform/api/rest", "destination": "/cli/commands/platform" },
+    { "source": "/platform/api/websocket", "destination": "/cli/commands/platform" },
+    { "source": "/platform/architecture/overview", "destination": "/cli/commands/platform" }
+  ],
   "contextual": {
     "options": [
       "copy",

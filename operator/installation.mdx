@@ -4,6 +4,8 @@ description: "Install the Dorgu Operator via Helm, kustomize, or source build"
 ---
 
 import OperatorInstall from '/snippets/operator-install-helm.mdx';
+import VersionPairing from '/snippets/version-pairing.mdx';
+import AiOffByDefault from '/snippets/ai-off-by-default.mdx';
 
 ## Prerequisites
 
@@ -25,18 +27,19 @@ That is the canonical install command, and it is the same one used in the [CLI q
   Earlier charts defaulted `healthCheck.enabled` to `false`, which meant following this page produced an operator that detected nothing. If you are reading an older copy of these instructions, that is the difference.
 </Note>
 
-<Warning>
-  **Chart 0.9.0 pairs with CLI v0.10.0. Upgrade both.** As of operator 0.9.0, a remediation for a workload that Helm, ArgoCD, or Flux owns is **recommendation only**: the operator records who owns the Deployment in `spec.workloadRef` and shapes the plan as instructions for that owner, rather than a command that writes to the cluster.
+### AI
 
-  Refusing the patch is the **CLI's** job, so the two versions matter in both directions:
+<AiOffByDefault />
 
-  - **CLI ≤ v0.9.0 against operator 0.9.0** does not read `workloadRef` at all and will still patch an owned Deployment, breaking the owner's next apply. This is the mismatch to avoid.
-  - **CLI v0.10.0 against operator ≤ 0.8.1** sees no `workloadRef`, treats that as owned on purpose, and declines every remediation carrying a workload change (exit code `4`). `dorgu remediation approve --no-heal` is the way through until the operator is upgraded.
+### Versions
 
-  Read [the ownership model](/ownership-model) before you upgrade a cluster that runs Helm or ArgoCD-managed apps. Persona writes are unaffected.
-</Warning>
+<VersionPairing />
 
-To turn detection off and run the operator for validation and cluster discovery only:
+Read [the ownership model](/ownership-model) before you upgrade a cluster that runs Helm or ArgoCD-managed apps. Persona writes are unaffected by any of it.
+
+### Turn detection off
+
+To run the operator for validation and cluster discovery only:
 
 ```bash
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
@@ -44,10 +47,6 @@ helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-o
   --create-namespace \
   --set healthCheck.enabled=false
 ```
-
-<Warning>
-  **AI stays opt-in.** Detection and rule-based diagnosis are local and free, so they are on. AI diagnosis and AI-written remediation plans cost money and send incident context to Anthropic, so they require `llm.provider`, a key, and `aiRemediation.enabled` set explicitly. A default install spends nothing on inference. See [AI setup](/operator/configuration/ai-setup).
-</Warning>
 
 ### Pin a chart version
 
@@ -57,11 +56,11 @@ The command above resolves the newest published chart. To pin an exact version f
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
   --namespace dorgu-system \
   --create-namespace \
-  --version 0.9.0
+  --version 0.11.0
 ```
 
 <Note>
-  `0.9.0` is the chart version this page is pinned to. Check [operator releases](https://github.com/dorgu-ai/dorgu-operator/releases) for the newest.
+  The chart version and the operator version are the same number, so `--version 0.11.0` installs operator `v0.11.0`. If the literal above has fallen behind, [Versions](#versions) is the statement to trust on this page, and [operator releases](https://github.com/dorgu-ai/dorgu-operator/releases) is the statement to trust over both.
 </Note>
 
 ### Install with a values file
@@ -108,15 +107,17 @@ cd dorgu-operator
 make install
 
 # Deploy the operator
-make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.9.0
+make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.11.0
 ```
 
-To uninstall:
+To reverse it:
 
 ```bash
-make undeploy
-make uninstall
+make undeploy    # removes the operator Deployment and its RBAC
+make uninstall   # removes the five CRDs, and with them every Dorgu record
 ```
+
+`make uninstall` deletes the CRDs, so it deletes every `ApplicationPersona`, `IncidentMemory`, `RemediationAction` and `DorguEvent` in the cluster along with them. Read [Uninstall](#uninstall) before you run it, particularly the part about your API key, which neither command touches.
 
 ## Build from source
 
@@ -206,6 +207,113 @@ kubectl -n dorgu-system logs deploy/dorgu-operator | grep "health check"
 
 Look for `Phase 2a/2b health check and remediation enabled` with the interval. If it is absent, detection is off.
 
+## Uninstall
+
+<Warning>
+  **Start with your Anthropic API key. `helm uninstall` does not remove it.**
+
+  The [AI setup](/operator/configuration/ai-setup) walkthrough has you create the key as a Secret out of band, with `kubectl create secret`, precisely so it never passes through Helm values. The consequence is that Helm never owned it and never deletes it, so an operator you removed an hour ago leaves your key sitting in the cluster:
+
+  ```bash
+  kubectl delete secret dorgu-llm -n dorgu-system
+  ```
+
+  Run that first, before anything else on this page, and rotate the key at Anthropic if the cluster was shared or is one you no longer control. The only case where Helm does clean it up is `llm.createSecret=true` with `llm.apiKey` set, which the docs recommend against for exactly the reasons in [AI setup](/operator/configuration/ai-setup).
+</Warning>
+
+### 1. Remove the release
+
+```bash
+helm uninstall dorgu-operator -n dorgu-system
+```
+
+That removes everything Helm actually owns: the operator Deployment, the ServiceAccount, the `dorgu-operator-manager` ClusterRole and ClusterRoleBinding, and the webhook and WebSocket Services and `ValidatingWebhookConfiguration` where you enabled them. The operator stops within seconds and nothing further is detected, diagnosed, or proposed.
+
+### 2. Know what is still there
+
+Quite a lot, and none of it announces itself:
+
+| What survives | Why |
+|---------------|-----|
+| **All five CRDs** | They are installed from the chart's `crds/` directory, and Helm never deletes those, by design. It is the standard behaviour and it is not a chart bug. |
+| **Every Dorgu record in the cluster**, in every namespace | `ApplicationPersona`, `ClusterPersona`, `IncidentMemory`, `RemediationAction` and `DorguEvent` objects are ordinary namespaced resources. Deleting the release does not delete them, and with the operator gone the retention cleaner is gone too, so `DorguEvent` records that used to expire after 24 hours are now permanent. |
+| **The `dorgu-system` namespace** | `--create-namespace` creates it but does not add it to the release, so `helm uninstall` leaves it. |
+| **A Secret you created yourself** | Covered above, and it is the one that matters. |
+
+The volume is larger than it sounds. A clean-room evaluation, meaning a stranger installing from these published docs and nothing else, measured **176 custom resources across 12 namespaces, `kube-system` included**, on a five-application test cluster after a single hour:
+
+```
+applicationpersona   10      incidentmemory    17      dorguevent   135
+clusterpersona        1      remediationaction 13
+```
+
+`DorguEvent` records reach `kube-system` because they are written into the namespace of the object they describe, and Dorgu watches the whole cluster. That is worth knowing before you install, not after.
+
+### 3. Keep the history, if you want it
+
+The incident and remediation records are the only account of what Dorgu saw. Step 4 destroys them, so export first if that matters:
+
+```bash
+kubectl get incidentmemories,remediationactions,applicationpersonas \
+  --all-namespaces -o yaml > dorgu-history.yaml
+```
+
+### 4. Delete the CRDs
+
+This is the step that completes the teardown. Deleting a CRD garbage-collects **every** custom resource of that kind, in every namespace, so five commands' worth of cleanup is one command and no label selector is needed:
+
+```bash
+kubectl delete crd \
+  applicationpersonas.dorgu.io \
+  clusterpersonas.dorgu.io \
+  dorguevents.dorgu.io \
+  incidentmemories.dorgu.io \
+  remediationactions.dorgu.io
+```
+
+<Warning>
+  **Irreversible, and wider than the namespace you installed into.** This removes Dorgu's records from the entire cluster, including any you wrote by hand and any under GitOps. Re-installing the chart brings the CRDs back empty.
+</Warning>
+
+### 5. Delete the namespace
+
+Only if Dorgu was the only thing in it:
+
+```bash
+kubectl delete namespace dorgu-system
+```
+
+This also removes the API key Secret, but do not rely on it for that. Someone who runs the obvious `helm uninstall` and stops there keeps the key, which is why it leads this section.
+
+### 6. Verify
+
+```bash
+kubectl get crd | grep dorgu.io                 # no output
+kubectl get ns dorgu-system                     # NotFound
+kubectl get secret -A | grep dorgu              # no output
+kubectl get clusterrole | grep dorgu            # no output
+```
+
+Four empty results mean Dorgu is gone. Anything printed is a leftover, and the section above says which step removes it.
+
+### Removing the operator but keeping the record
+
+A common middle case: you are done evaluating, but the incident history is worth keeping, or the personas are under GitOps and you intend to reinstall. Run step 1 only, and stop:
+
+```bash
+helm uninstall dorgu-operator -n dorgu-system
+```
+
+The CRDs and every record stay, nothing reconciles them, and a later `helm install` picks the same objects straight back up. The two things to be deliberate about are that `DorguEvent` records will not be pruned while no operator is running, and that the API key Secret is still there. If you only want the records gone and the CRDs kept, delete the records directly instead of the CRDs:
+
+```bash
+kubectl delete applicationpersonas,incidentmemories,remediationactions,dorguevents \
+  --all --all-namespaces
+kubectl delete clusterpersonas --all
+```
+
+`ClusterPersona` is cluster-scoped, which is why it is a separate command.
+
 ## Next steps
 
 <CardGroup cols={2}>
@@ -223,5 +331,8 @@ Look for `Phase 2a/2b health check and remediation enabled` with the interval. I
   </Card>
   <Card title="Configuration" icon="gear" href="/operator/configuration/overview">
     Customize flags and Helm values
+  </Card>
+  <Card title="Uninstall" icon="trash" href="#uninstall">
+    Complete teardown, starting with your API key
   </Card>
 </CardGroup>

@@ -12,7 +12,7 @@ Approving does two things: it records your decision on the `RemediationAction`, 
 <Warning>
   **Dorgu will not patch a Deployment that Helm, ArgoCD, or Flux owns.** `approve` and `heal` read `spec.workloadRef` and decline for every `managedBy` except `unmanaged`, exiting **`4`** (`ExitDeclined`). Nothing is approved and nothing changes; instead you get the owner named and the fix restated as what to change in your source of truth.
 
-  There is no `--force` and no override flag, on purpose. Read [the ownership model](/ownership-model) for why, and note that it needs **CLI v0.10.0 with operator v0.9.0**: an older CLI ignores the record and patches anyway.
+  There is no `--force` and no override flag, on purpose. Read [the ownership model](/ownership-model) for why. The guard needs **CLI v0.10.0 or newer**, because an older CLI ignores the record and patches anyway: see [versions](/cli/installation#versions).
 </Warning>
 
 <Note>
@@ -92,9 +92,11 @@ Lists `RemediationAction` resources. By default it shows only active ones — `P
 ```
 Active Remediations (1)
 
-NAMESPACE   NAME                PHASE    TYPE            PLAN          STEPS  CONFIDENCE  PERSONA     AGE
-production  fix-oom-api-server  Pending  persona-update  ai-anthropic  3      0.85        api-server  4m
+NAMESPACE   NAME                PHASE    TYPE            PLAN        STEPS  CONFIDENCE  PERSONA     AGE
+production  fix-oom-api-server  Pending  persona-update  rule-based  2      0.90        api-server  4m
 ```
+
+`PLAN: rule-based` is what a default install produces. It reads `ai-anthropic` where you have [turned the planner on](/operator/configuration/ai-setup).
 
 ### Output columns
 
@@ -103,12 +105,29 @@ production  fix-oom-api-server  Pending  persona-update  ai-anthropic  3      0.
 | NAMESPACE | Namespace of the RemediationAction |
 | NAME | Resource name |
 | PHASE | Lifecycle phase (see [Lifecycle](#lifecycle)) |
-| TYPE | `spec.action.type` — `persona-update`, `notification`, or `git-pr` |
-| PLAN | `ai-anthropic` when Claude wrote the plan, `rule-based` when the deterministic rules did, `-` for older objects that carry no ordered plan |
+| TYPE | `spec.action.type`: `persona-update`, `notification`, or `git-pr` |
+| PLAN | `rule-based` when the deterministic rules wrote the plan, which is the default, `ai-anthropic` when Claude did, `-` for older objects that carry no ordered plan |
 | STEPS | Number of ordered steps in the plan, or `-` for a single-action object |
+| GUARDRAIL | **Conditional.** The strongest verdict any of Dorgu's guardrails reached on any step of the plan. See below. |
 | CONFIDENCE | Diagnosis confidence as a decimal string, e.g. `0.85` |
 | PERSONA | Name of the persona being remediated |
 | AGE | Time since the RemediationAction was created |
+
+#### The GUARDRAIL column
+
+It appears **only when there is something to put in it**, sitting beside `STEPS`. On a cluster where no guardrail has ruled on anything, the column is absent and the list prints exactly what it printed before.
+
+```
+NAMESPACE  NAME                   PHASE    TYPE            PLAN          STEPS  GUARDRAIL  CONFIDENCE  PERSONA   AGE
+apps       fix-oom-checkout       Pending  persona-update  ai-anthropic  3      rejected   0.85        checkout  4m
+apps       fix-oom-report-worker  Pending  persona-update  rule-based    2      -          0.90        worker    6m
+```
+
+Ranked by how much a reader needs to know: `rejected` (a field refused outright) over `clamped` (a value substituted) over `derived` (a value Dorgu sized itself), with `-` when no guardrail ruled.
+
+**It is a pointer, not the record.** One word cannot carry a field-by-field account, and it does not try to. Read [`dorgu remediation diff`](#guardrail-verdicts) for what was actually decided.
+
+Requires **operator v0.11.0** with **CLI v0.12.0**. Against an older operator the underlying `spec.steps[].safety` field is absent, the column never appears, and `--json` gains no `safety` key.
 
 <Note>
   **There is no severity here.** `RemediationAction` carries no `severity` field, so this command cannot filter or sort by it — the blank `SEVERITY` column and the `--severity` flag that matched nothing were both removed. Filter by `--phase`, and read severity from the linked incident with [`dorgu incidents describe`](/cli/commands/incidents), where `--severity` does work.
@@ -257,6 +276,53 @@ Actions:
 ```
 
 Once the action leaves `Pending`, that action block is gone, so the Deployment change block carries the fact instead: `Dorgu did not apply this: <owner> owns this Deployment.`
+
+### Guardrail verdicts
+
+When one of Dorgu's guardrails has ruled on a field, `diff` prints what it decided under its own heading, per step, between the rationale and the diff that reflects it.
+
+```
+  [1] persona-update (low; auto): Set spec.resources.limits.memory to 512Mi on the ApplicationPersona.
+      Dorgu decides what its guardrails permit, so the outcome above is Dorgu's own arithmetic
+      against the workload it observed, not the plan's account of it.
+      Dorgu guardrails (Dorgu's measurement, not the plan's):
+        clamped  spec.resources.limits.memory  (blast-radius)
+          requested 4Gi, baseline 256Mi, 16.0x against a 2.0x ceiling, applying 512Mi
+          Blast-radius guardrail: the plan asked to set spec.resources.limits.memory to 4Gi, ...
+        rejected  spec.resources.limits.cpu  (absent-field)
+          requested 500m, applying nothing
+          Left out: container "checkout" on checkout does not set cpu today, ...
+```
+
+<Warning>
+  **Every number in that block is Dorgu's own arithmetic. None of it is the model's, and the model is not permitted to comment on a cap at all.** The heading says so out loud because the lines immediately above it, the description and the rationale, may be a model's prose, and the reader is about to approve a change to a running workload.
+
+  It used to arrive as a `[safety:blast-radius] …` prefix on the model's `rationale`. In clean-room run #4 that put Dorgu's measurement one line below the model's claim that the same 16x change was "well within a 2x ceiling", with nothing to tell the reader which of the two had been computed.
+</Warning>
+
+Read the three columns of each entry as: what the guardrail decided, on which field, under which rule. Then the facts line, which answers what was asked for, what it was measured against, and what will actually happen.
+
+| Verdict | The field's fate |
+|---------|------------------|
+| `clamped` | Refused, and Dorgu substituted a value it permits. `applying <value>` is what the patch carries, and it is what the diff below shows. |
+| `rejected` | Refused, and nothing replaces it. The field is **gone from the patch**, so it appears in no diff. This block is the only place the reader learns it was asked for at all. |
+| `derived` | The plan named the change but carried nothing appliable, so Dorgu computed the value itself from the live workload. |
+
+`applying nothing` is stated rather than left to inference, because a missing word is not a fact a reader should have to notice.
+
+The verdicts appear in **three** places, each of them the last screen before a decision:
+
+| Where | Why there |
+|-------|-----------|
+| `dorgu remediation diff`, per step | The review surface. |
+| The `approve` and `heal` preview, above the confirmation prompt | So a value a guardrail chose is visible before you answer `y`. |
+| The [owned-workload refusal](/ownership-model#the-refusal) | That reader types the number into Helm values or Git, somewhere Dorgu will never see it, so they most need to know the ceiling was Dorgu's and not the plan's. |
+
+<Note>
+  **Printed once, not twice.** The operator writes a guarded step's `description` as its own sentence followed by each safety message verbatim, so that a client which knows nothing of the field still delivers the verdict. The CLI takes those messages back out of the description, so the verdict appears once, under the heading, with the numbers beside it, rather than twice, three lines apart.
+</Note>
+
+Requires **operator v0.11.0** with **CLI v0.12.0**. Against an older operator `spec.steps[].safety` is absent, no block is printed, and the step renders exactly as it did before. Full schema: [step safety fields](/cli/architecture/crds#step-safety-fields). How the verdicts are produced: [guardrail verdicts as data](/operator/features/self-healing#guardrail-verdicts-as-data).
 
 ### Ready-to-run commands on advisory steps
 
