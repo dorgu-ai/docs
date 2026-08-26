@@ -231,13 +231,21 @@ ClusterPersona is a cluster-scoped resource that captures the overall cluster co
 |-------|------|-------------|
 | `phase` | enum | `Discovering`, `Ready`, `Degraded` |
 | `nodes[]` | array | Node names, roles, capacity, and conditions |
-| `resourceSummary` | object | Total and allocatable CPU/memory across all nodes |
+| `resourceSummary` | object | Allocatable CPU/memory across all nodes, plus what **scheduled** pods have requested. `usedCPU` and `usedMemory` hold *requests*, not consumption, despite the names |
 | `addons[]` | array | Detected add-ons (ArgoCD, Prometheus, Grafana, etc.) |
 | `kubernetesVersion` | string | Cluster Kubernetes version |
 | `platform` | string | Detected platform (EKS, GKE, AKS, Kind, etc.) |
 | `applicationCount` | int | Total number of managed ApplicationPersonas |
 
 The ClusterPersona controller reconciles every 5 minutes, scanning nodes, namespaces, and well-known add-on namespaces to keep the status current.
+
+<Warning>
+  **`resourceSummary` counted pods no node had accepted, until operator v0.11.0.** `cpuUtilization` read **1689%** on a cluster where 25% was requested, because every non-terminal pod had its requests summed against node allocatable and a pod sitting in the scheduling queue is non-terminal. That is not an over-estimate to be tightened: an unscheduled pod holds no allocation on any node, and because it can request more than the cluster owns, the error had no upper bound. Only pods a node has accepted are counted now.
+
+  The schema was right and the code did not match it: this field's own description already said "the CPU claimed by the resource requests of **scheduled** pods".
+
+  Two consequences worth knowing. This field feeds the dashboard's cluster view, where a wrong number reads as authoritative in a way terminal output does not, so upgrade the operator if anything renders it. And [`dorgu health` no longer reads it at all](/cli/commands/health#resource-saturation): as of CLI v0.12.0 the CLI computes saturation itself from nodes and pods, so the two are corrected from both ends and the terminal figure does not depend on which operator version happens to be installed.
+</Warning>
 
 ### Self-healing policy
 

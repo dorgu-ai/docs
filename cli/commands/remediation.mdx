@@ -24,11 +24,17 @@ Approving does two things: it records your decision on the `RemediationAction`, 
 | Code | Meaning |
 |------|---------|
 | `0` | The command did what it was asked, including a `--no-heal` approval |
-| `1` | Failure: unreachable cluster, missing kubeconfig, no `kubectl`, a failed API call, wrong phase |
+| `1` | Failure: unreachable cluster, missing kubeconfig, no `kubectl`, a failed API call, wrong phase. **Also the patched-but-unrecorded case below**, where the workload *was* changed |
 | `4` | **Declined.** Dorgu understood the plan, could see exactly what to do, and chose not to write because something else owns the workload. Nothing failed and nothing changed. |
 
 <Warning>
   **`4` is not a failure, and a wrapper that treats every non-zero exit as breakage will now misreport it.** Update the wrapper to accept `4`, or use `dorgu remediation approve <name> -n <ns> --no-heal`, which records the decision without a workload patch and exits `0`.
+</Warning>
+
+<Warning>
+  **New in CLI v0.12.0: a non-zero heal no longer means "nothing happened".** `heal` and `approve` can now exit `1` **after** successfully patching your workload, when the patch landed but the record of it could not be written back to the `RemediationAction`. The workload is patched by then and **nothing is undone**.
+
+  A script that treats non-zero as "the change did not apply, retry or roll forward" will be wrong about the cluster in exactly that case. Read the message: it names which way round the disagreement runs. See [when the record cannot be written](#when-the-record-cannot-be-written).
 </Warning>
 
 ## Lifecycle
@@ -414,6 +420,9 @@ Approves a `Pending` remediation and, when Dorgu owns the write, heals the workl
   <Step title="The CLI heals the workload">
     The CLI translates the approved resource change into an equivalent strategic-merge patch on the matching Deployment and applies it with **your** credentials, so the pod actually restarts with the new limits. Use `--no-heal` to skip this.
   </Step>
+  <Step title="The CLI records the patch">
+    A `WorkloadPatched` condition is stamped on the RemediationAction naming the Deployment, container, and fields it set, so the record and the cluster agree. **New in CLI v0.12.0.** The phase is already `Approved` by this point from step 2, so only the condition is written. See [what the heal records](#what-the-heal-records).
+  </Step>
 </Steps>
 
 Advisory steps (`restart`, `scale`, `config-change`, `manual`, and any `persona-update` that is not a resource change) are printed as numbered manual instructions. They are never executed.
@@ -522,6 +531,8 @@ The CLI warns that the persona and the running workload will disagree until you 
 
 If a heal does fail after approval, the CLI names the divergence rather than reporting success: `the remediation is Approved but <ns>/<deployment> was NOT patched; the persona and the workload now disagree`. `--no-heal` warns about the same divergence up front.
 
+That is the divergence where the **workload** did not change. Since CLI v0.12.0 there is a second, opposite one: the workload changed but the **record** could not be written. Both exit non-zero, and both name which way round they run, because they call for different responses. See [when the record cannot be written](#when-the-record-cannot-be-written).
+
 Only `Pending` remediations can be approved. Anything else exits with an error naming the current phase.
 
 ---
@@ -560,7 +571,9 @@ Rejecting is also a safety gate: `dorgu remediation heal` refuses to run against
 dorgu remediation heal <name> -n <namespace> [flags]
 ```
 
-Applies an approved remediation's resource change to the workload on its own. `approve` runs this for you unless you passed `--no-heal`, so reach for `heal` when you deferred the apply, or when a previous heal failed and you want to retry it.
+Applies an approved remediation's resource change to the workload on its own, then [records that it did](#what-the-heal-records). `approve` runs this for you unless you passed `--no-heal`, so reach for `heal` when you deferred the apply, or when a previous heal failed and you want to retry it.
+
+It is idempotent, which is what makes re-running it the fix for a heal that patched but could not record.
 
 ### Flags
 
@@ -597,7 +610,70 @@ Applies an approved remediation's resource change to the workload on its own. `a
   <Step title="Release">
     The `dorgu` entry is then removed from `metadata.managedFields` and the object is read back to confirm it is gone, so a heal leaves **no ownership footprint** and a later server-side apply does not conflict with it. If the removal fails, the heal still succeeded and the CLI says loudly what is left behind and how to clear it. **New in CLI v0.11.0.** See [Dorgu leaves no field manager behind](/ownership-model#dorgu-leaves-no-field-manager-behind).
   </Step>
+  <Step title="Record">
+    The `RemediationAction` is updated to say what just happened, so the record and the cluster agree. **New in CLI v0.12.0.** See [what the heal records](#what-the-heal-records).
+  </Step>
 </Steps>
+
+### What the heal records
+
+**New in CLI v0.12.0.** Two writes follow a patch the cluster accepted, and only ever follow one:
+
+| Write | When | Why |
+|-------|------|-----|
+| Phase moves `Pending` → `Approved` | Only from `Pending` or an unset phase | Healing a `Pending` remediation directly has always been an implicit approval, and the command has always warned that it is. It just never recorded it. |
+| A `WorkloadPatched` condition is stamped | **Every** successful heal, whatever phase it started from | The explicit applied marker, naming the namespace, the Deployment, the container, and each field that was set. |
+
+```bash
+$ kubectl get remediationaction fix-oom-report-worker -n apps -o yaml
+```
+
+```yaml
+status:
+  phase: Approved
+  approvedBy: cli-user
+  conditions:
+    - type: WorkloadPatched
+      status: "True"
+      reason: CLIAppliedResourceChange
+      message: dorgu CLI applied resources.limits.memory=128Mi to Deployment apps/report-worker (container worker)
+```
+
+<Warning>
+  **This fixes a heal that reported success and left the record wrong.** `heal` patched a workload from 64Mi to 128Mi, printed `✓ Healed`, exited `0`, and left the `RemediationAction` on `Pending`. The two things Dorgu keeps then disagreed: the cluster carried the new limits, and the record said nobody had approved anything and nothing had happened. For a product sold on organizational memory, memory that contradicts the cluster is worse than none.
+
+  The phase transition also closed a half nobody had noticed. A `Pending` action is a no-op to the operator, so the **persona** never learned the new limits either, which left the app's desired-state record out of step with the cluster as well.
+</Warning>
+
+Two design points, because both are easy to assume otherwise:
+
+- **The marker is a condition, not `status.appliedAt`.** `appliedAt` is the operator's: it is stamped when the persona patch lands and read during `Applying` to time the verification window, so writing to it would move a clock the CLI does not drive. It is also needed *on top of* the phase transition, because a re-heal after `--no-heal` starts from a phase already past `Approved`, where a phase change would be both wrong and invisible.
+- **The CLI does not move the phase of an action already `Approved`, `Applying`, `Verifying`, or terminal.** That lifecycle belongs to the operator, and a CLI writing into the middle of a state machine it does not drive is a different bug from the one being fixed. Those heals stamp the condition and leave the phase alone.
+
+<Note>
+  The write is a read-modify-write, because conditions are keyed by type and adding one means sending the whole list. Every other writer's condition goes back as raw JSON byte for byte, the CLI's own prior marker is replaced rather than appended, the `resourceVersion` is sent as a precondition, and a conflict is retried against fresh state three times before it is reported. Round-tripping the operator's conditions through a struct would silently drop fields the CLI does not know about, and quietly rewriting the operator's record while fixing a record bug is a poor trade.
+</Note>
+
+### When the record cannot be written
+
+The workload is patched by then, so nothing is undone. But the command **exits `1`** and says which way round the disagreement runs, because exiting `0` there would reproduce the defect above:
+
+```
+✓ Healed apps/report-worker (container worker). The pod will restart with the updated resources.
+⚠ apps/report-worker was patched, but Dorgu could not record that on the remediation: ...
+  The cluster has resources.limits.memory → 128Mi and remediationaction apps/fix-oom-report-worker does not say so.
+  Close the gap by re-running the heal, which will record it on the way through:
+    dorgu remediation heal fix-oom-report-worker -n apps
+  Until then, treat the remediation record as incomplete rather than as evidence.
+```
+
+Note that the success line still prints, because the heal genuinely succeeded. It is the *record* that failed, and the two are reported separately.
+
+<Note>
+  **No paste-ready `kubectl patch` is offered, on purpose.** The only patch that would work replaces the whole `conditions` list, so handing one over would have you overwrite the operator's own conditions to fix a record bug. Re-running the heal is both shorter and safe: it is idempotent, and it records the change on the way through.
+</Note>
+
+This is the same class as the field-manager footprint warning, with one deliberate difference. A failed footprint strip leaves the heal green, because it is a future apply conflict rather than a wrong record. A failed record write is not green, because a record that contradicts the cluster is the thing being fixed.
 
 ### Safety gates
 

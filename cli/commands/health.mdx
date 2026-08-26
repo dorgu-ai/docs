@@ -13,9 +13,19 @@ dorgu health [flags]
 
 Display a comprehensive cluster health summary by querying the Kubernetes API directly. The output includes node status, resource saturation (CPU and memory), control plane component health, active incidents, and pending remediations.
 
-When the Dorgu Operator is installed, the command shows richer data sourced from `ClusterPersona` resource summaries, `IncidentMemory` CRDs, and `RemediationAction` CRDs. Without the operator, it gracefully degrades to node and control plane information only.
+When the Dorgu Operator is installed, the command adds `IncidentMemory` and `RemediationAction` data. Without the operator it degrades to nodes, resource saturation, and control plane, all of which come from the Kubernetes API and need nothing installed.
 
 It also names what it **cannot** see: any Deployment with no matching `ApplicationPersona` is listed under [Unmonitored](#unmonitored-deployments), because a workload Dorgu is not watching can never appear as an incident.
+
+<Warning>
+  **Breaking in CLI v0.12.0: `--json` reports saturation in a new shape, and the old `used` key never meant used.**
+
+  `resourceSaturation.{cpu,memory}` carried `{percentage, used, allocatable}`, where `used` actually held the **requests** the scheduler had committed. On the cluster that surfaced this, requested was 25% and used was 1%, which is the difference between nearly full and nearly idle. Anything reading the old `used` key was reading the wrong number, not a stale one.
+
+  The shape is now `{allocatable, requested, requestedPercent, used, usedPercent}`, with `nodes`, `scheduledPods`, `unscheduledPods` and `usedUnavailable` added alongside. Renaming in place was rejected on purpose: a key that silently changes meaning is the defect, not the fix.
+
+  **If you script against `dorgu health --json`, see [JSON output](#json-output) before upgrading.** The terminal output changed too, and [resource saturation](#resource-saturation) covers both.
+</Warning>
 
 ## Flags
 
@@ -33,11 +43,78 @@ It also names what it **cannot** see: any Deployment with no matching `Applicati
 | Section | Source | Description |
 |---------|--------|-------------|
 | **Nodes** | `kubectl get nodes` | Name, status (Ready/NotReady), roles, age |
-| **Resource Saturation** | ClusterPersona `.status.resourceSummary` | CPU and memory request utilization as a percentage of allocatable capacity |
+| **Resource Saturation** | The node list, plus a pod list, plus metrics-server where present. **Computed by the CLI.** | Requested and used, side by side, against allocatable. Needs no operator. See [resource saturation](#resource-saturation). |
 | **Control Plane** | Pods in `kube-system` with `tier=control-plane` | Health of API Server, Scheduler, Controller Manager, etcd |
 | **Active Incidents** | `IncidentMemory` CRDs (operator required) | Severity, category, signal, persona reference, age. With N applications broken, this reports N: incidents are scoped to one application in one namespace, so one row never stands in for several apps. |
 | **Pending Remediations** | `RemediationAction` CRDs (operator required) | Count of remediations in `Pending` or `Approved` phase |
 | **Unmonitored** | Deployments with no matching `ApplicationPersona` | The Deployments Dorgu is not watching, and the command to onboard them |
+
+## Resource saturation
+
+**New in CLI v0.12.0.** Saturation is computed by the CLI from the node list it already fetched plus a pod list, and reports **requested** and **used** as two separate columns:
+
+```
+Resource Saturation: (2 node(s), 3 scheduled pod(s))
+          REQUESTED            USED
+  CPU     950m / 3860m (25%)   38m / 3860m (1%)
+  Memory  832Mi / 7.1Gi (11%)  1010Mi / 7.1Gi (14%)
+  Requested is what the scheduler has committed. Used is what the containers are consuming.
+```
+
+| Column | What it answers |
+|--------|-----------------|
+| **REQUESTED** | What the scheduler has already committed out of allocatable. Near 100% means nothing more will schedule. |
+| **USED** | What the containers are actually consuming, from metrics-server. Near 100% means what is already running is struggling. |
+
+They are two columns because they call for different actions and used to share one line. The header states which is which, so `25%` can never be read as usage.
+
+<Warning>
+  **This replaces a figure that could be wrong without limit.** `dorgu health` printed **1689% CPU** on a cluster where 25% was requested and 1% was in use. The number was not the CLI's: it was `ClusterPersona.status.resourceSummary.cpuUtilization` rendered verbatim, and the operator computed it as the requests of every non-terminal pod over node allocatable. A pod no node has accepted is non-terminal, so a backlog of unschedulable pods inflated the figure with no upper bound, because such a pod can request more than the cluster owns.
+
+  Computing it in the CLI is deliberate rather than duplicated work. `dorgu health` documents itself as querying the Kubernetes API directly, saturation was the one section that did not, and a figure read from a five-minute-stale field on whatever operator version happens to be installed cannot be relied on. The same defect is [fixed at the source in operator v0.11.0](/operator/features/self-healing), because the dashboard reads that field.
+</Warning>
+
+### Unscheduled pods are excluded, and counted
+
+A pod with no `spec.nodeName` holds no allocation on any node, so counting its requests against allocatable is a category error rather than an approximation. Those pods are excluded from the figures and reported as the real problem the old percentage was burying:
+
+```
+⚠ 3 pods are not scheduled onto any node, so they are excluded from the figures above.
+  A pod no node has accepted holds no allocation. Counting one would inflate saturation without limit.
+```
+
+A `Pending` pod that **has** been bound to a node still counts, because a reservation held while an image pulls is a real reservation. Succeeded and Failed pods are excluded too, for the different reason that they ran to completion and released what they held.
+
+### A resource close to booked out is named
+
+At **90%** of allocatable requested or above, the command says so rather than leaving you to do the division it had previously got wrong:
+
+```
+⚠ CPU requests are at 95% of allocatable; new pods may not schedule.
+```
+
+<Note>
+  **No saturation incident is raised at any level.** Detection is the operator's job, and this section only reports. A cluster at 95% requested prints the warning above and opens no `IncidentMemory`.
+</Note>
+
+### A missing used figure says why
+
+metrics-server is not installed by default, so its absence renders as a reason rather than as zero:
+
+```
+          REQUESTED            USED
+  CPU     950m / 3860m (25%)   n/a (metrics-server did not answer: ...)
+```
+
+Requested still reports without it. An absent figure is never printed as `0`, and never as a blank operand.
+
+<Note>
+  The whole section is bounded by a 15-second deadline of its own, because listing every pod is the expensive call in `dorgu health` and one slow pod list should not take the node table, the incident list, and the exit code down with it. On a timeout the section is omitted and the reason is printed. Saturation also needs the node list to have succeeded, since allocatable comes from it.
+</Note>
+
+<Note>
+  **`dorgu health --watch` labels the operator's figure `cpu-requested=` and `mem-requested=`.** The stream carries `ClusterPersona` values rather than the CLI's own computation, and a bare `cpu=25%` reads as usage when it is requests.
+</Note>
 
 ## Unmonitored Deployments
 
@@ -116,6 +193,21 @@ esac
 
 ## JSON output
 
+<Warning>
+  **`resourceSaturation` changed shape in CLI v0.12.0, and the change is breaking.** The old `used` key held requests, so a consumer that trusted the key name was reading the wrong number rather than an out-of-date one. Nothing was renamed in place, precisely so that a script reading `used` now gets *used* instead of quietly continuing to get requests under a name that had started meaning something else.
+
+  | Before (≤ v0.11.0) | Now (v0.12.0) | Note |
+  |--------------------|---------------|------|
+  | `cpu.percentage` | `cpu.requestedPercent` | Same meaning, honest name |
+  | `cpu.used` | `cpu.requested` | **The value moved.** The old key held requests |
+  | `cpu.allocatable` | `cpu.allocatable` | Unchanged |
+  | absent | `cpu.used`, `cpu.usedPercent` | Genuinely used, from metrics-server. **Omitted** when it did not answer |
+  | absent | `nodes`, `scheduledPods`, `unscheduledPods` | What the figures cover, and what was excluded |
+  | absent | `usedUnavailable` | Why a used figure is missing. Omitted when it is present |
+
+  **Migrating:** a script that read `resourceSaturation.cpu.used` as "how full is the cluster" wants `requested` or `requestedPercent`. One that genuinely wanted consumption wants the new `used`, and must handle its absence, since metrics-server is not installed by default. Read `unscheduledPods` too: a non-zero value means pods were excluded from `requested`, which is the case the old figure got catastrophically wrong.
+</Warning>
+
 When `--json` is set, the output follows this structure:
 
 ```json
@@ -124,8 +216,23 @@ When `--json` is set, the output follows this structure:
     { "name": "node-1", "status": "Ready", "roles": "control-plane", "age": "5d" }
   ],
   "resourceSaturation": {
-    "cpu": { "percentage": "42%", "used": "1700m", "allocatable": "4000m" },
-    "memory": { "percentage": "61%", "used": "3.2Gi", "allocatable": "5.2Gi" }
+    "cpu": {
+      "allocatable": "3860m",
+      "requested": "950m",
+      "requestedPercent": "25%",
+      "used": "38m",
+      "usedPercent": "1%"
+    },
+    "memory": {
+      "allocatable": "7.1Gi",
+      "requested": "832Mi",
+      "requestedPercent": "11%",
+      "used": "1010Mi",
+      "usedPercent": "14%"
+    },
+    "nodes": 2,
+    "scheduledPods": 3,
+    "unscheduledPods": 0
   },
   "controlPlane": {
     "healthy": true,
@@ -164,6 +271,22 @@ When `--json` is set, the output follows this structure:
 
 `unmonitored.items` is the full, uncapped list even when the human-readable output truncated it. `unmonitored.personaCRDMissing` is present and `true` when the `ApplicationPersona` CRD is not installed.
 
+Where metrics-server did not answer, the used half is **omitted rather than zeroed**, and the reason is stated once at the top level:
+
+```json
+{
+  "resourceSaturation": {
+    "cpu": { "allocatable": "3860m", "requested": "950m", "requestedPercent": "25%" },
+    "nodes": 2,
+    "scheduledPods": 3,
+    "unscheduledPods": 3,
+    "usedUnavailable": "metrics-server did not answer: ..."
+  }
+}
+```
+
+`resourceSaturation` itself is omitted entirely when the node list could not be read or the pod list timed out, since allocatable and requests both come from those. An absent object means "not measured", which is why it is absent rather than a set of zeroes.
+
 When the incident records cannot be read at all, `activeIncidents` carries `"unavailable": true` and a `"reason"` string instead of a count of `0`, so a reader can tell "none" from "unknown":
 
 ```json
@@ -178,5 +301,5 @@ When the incident records cannot be read at all, `activeIncidents` carries `"una
 ```
 
 <Note>
-  Requires `kubectl` in your PATH. Resource saturation data requires the Dorgu Operator and a `ClusterPersona` resource. Incident and remediation data requires the `IncidentMemory` and `RemediationAction` CRDs; when they are absent that is reported as unavailable rather than as a count of zero.
+  Requires `kubectl` in your PATH. Nodes, [resource saturation](#resource-saturation), and control plane come from the Kubernetes API and need **no operator installed**; saturation in particular used to require one and no longer does. The used half of saturation needs metrics-server, and says so when it is missing. Incident and remediation data requires the `IncidentMemory` and `RemediationAction` CRDs; when they are absent that is reported as unavailable rather than as a count of zero.
 </Note>

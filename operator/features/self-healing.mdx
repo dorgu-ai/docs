@@ -518,6 +518,25 @@ Two rules bound it. Only personas in the **signal's own namespace** are consider
     An empty string in `observedResources` means the container does not set that key, which is different from a value of zero, and is what stops a memory fix from adding a CPU limit. A `workloadRef` with no `name` means the operator could not resolve the Deployment at all: fix that first, since an unresolved workload loses its grounding and its advisory commands together.
   </Accordion>
 
+  <Accordion title="heal printed a green checkmark and then exited 1, but the pod is fixed">
+    Both halves of that are true, and this is CLI v0.12.0 behaviour rather than a fault. The workload patch landed, so the pod really is fixed and **nothing was undone**. What failed is the write that records the patch back onto the `RemediationAction`, and exiting `0` there would reproduce the defect the recording exists to fix: a cluster and a record that disagree.
+
+    Re-run the heal. It is idempotent and records the change on the way through:
+
+    ```bash
+    dorgu remediation heal <name> -n <ns>
+    ```
+
+    Then confirm the record caught up:
+
+    ```bash
+    kubectl get remediationaction <name> -n <ns> \
+      -o jsonpath='{.status.phase}{"  "}{.status.conditions[?(@.type=="WorkloadPatched")].message}{"\n"}'
+    ```
+
+    Until it does, treat the remediation record as incomplete rather than as evidence of what is in the cluster. Full detail, including why no paste-ready `kubectl patch` is offered: [when the record cannot be written](/cli/commands/remediation#when-the-record-cannot-be-written).
+  </Accordion>
+
   <Accordion title="The remediation is stuck in Applying or Verifying">
     It is not stuck. The operator waits out the verification window — 10 minutes by default — before it will call the fix good. Check the pod itself: if it is `1/1 Running` with no new restarts, the heal worked and the phase will settle on its own.
   </Accordion>
