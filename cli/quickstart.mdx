@@ -102,7 +102,7 @@ spec:
   type: worker
   tier: standard
   technical:
-    language: shell
+    language: python
     description: Deliberate memory hog used to demonstrate OOM self-healing.
   resources:
     requests:
@@ -133,9 +133,9 @@ spec:
     spec:
       containers:
         - name: memhog
-          image: polinux/stress
-          command: ["stress"]
-          args: ["--vm", "1", "--vm-bytes", "90M", "--vm-hang", "0", "--timeout", "600s"]
+          image: python:3.12-alpine
+          command: ["python", "-c"]
+          args: ["import time; a = bytearray(90 * 1024 * 1024); time.sleep(600)"]
           resources:
             requests:
               cpu: "50m"
@@ -153,11 +153,12 @@ kubectl -n demo get pods -l app=memhog -w
 Within a few seconds the pod goes `OOMKilled`, then `CrashLoopBackOff`. Left alone, Kubernetes would restart it forever.
 
 <Warning>
-  Three details in that manifest are load-bearing:
+  Four details in that manifest are load-bearing:
 
   1. **The persona is named `memhog`, exactly like the Deployment.** The operator correlates a signal to a persona by name prefix, and pods are `memhog-<hash>`, so the persona must be `memhog`. Rename one and no incident gets a persona, and no fix is ever proposed. (Resolving a persona *back* to its Deployment is separate and needs no label at all: see [discovery](/operator/features/self-healing#prerequisites).)
   2. **The persona declares `resources.limits`.** Without a current limit the proposer has nothing to compute a bounded change from, and skips.
-  3. **The allocation fits after the fix.** Increases are capped at 2× the live limit, so 64Mi becomes at most 128Mi, and ~90 MB fits in 128Mi. One approval heals it.
+  3. **The allocation fits after the fix.** Increases are capped at 2× the live limit, so 64Mi becomes at most 128Mi, and ~90 MB plus the interpreter fits in 128Mi. One approval heals it.
+  4. **The image is a manifest list.** `python:3.12-alpine` publishes `linux/amd64` and `linux/arm64`, so this manifest runs unchanged on an AWS Graviton nodegroup and on kind or k3d on an Apple Silicon Mac. A single-platform `amd64` image here does not fail cleanly: on containerd the pull succeeds and the container exits 255 with `exec format error`, which reads as `CrashLoopBackOff` and gets diagnosed as something else entirely.
 </Warning>
 
 <Note>

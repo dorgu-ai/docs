@@ -12,6 +12,7 @@ import AiOffByDefault from '/snippets/ai-off-by-default.mdx';
 - Kubernetes cluster 1.24+
 - `kubectl` configured for your cluster
 - Helm 3.x (for Helm installation)
+- Chart `0.11.1` or newer on `arm64` nodes, including AWS Graviton and Apple Silicon kind or k3d clusters. Every image up to and including `0.11.0` was `amd64`-only. See [Versions](#versions).
 
 ## Helm (recommended)
 
@@ -56,11 +57,11 @@ The command above resolves the newest published chart. To pin an exact version f
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
   --namespace dorgu-system \
   --create-namespace \
-  --version 0.11.0
+  --version 0.11.1
 ```
 
 <Note>
-  The chart version and the operator version are the same number, so `--version 0.11.0` installs operator `v0.11.0`. If the literal above has fallen behind, [Versions](#versions) is the statement to trust on this page, and [operator releases](https://github.com/dorgu-ai/dorgu-operator/releases) is the statement to trust over both.
+  The chart version and the operator version are the same number, so `--version 0.11.1` installs operator `v0.11.1`. If the literal above has fallen behind, [Versions](#versions) is the statement to trust on this page, and [operator releases](https://github.com/dorgu-ai/dorgu-operator/releases) is the statement to trust over both.
 </Note>
 
 ### Install with a values file
@@ -107,7 +108,7 @@ cd dorgu-operator
 make install
 
 # Deploy the operator
-make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.11.0
+make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.11.1
 ```
 
 To reverse it:

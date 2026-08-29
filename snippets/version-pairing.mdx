@@ -1,5 +1,7 @@
 <Note>
-  **Current versions: CLI `v0.12.0` with operator `v0.11.0`** (Helm chart `0.11.0`; the chart version, the chart `appVersion`, and the operator version are always the same number). Newest of each is always the right answer, and this note is the only place in these docs that states which that is.
+  **Current versions: CLI `v0.12.0` with operator `v0.11.1`** (Helm chart `0.11.1`; the chart version, the chart `appVersion`, and the operator version are always the same number). Newest of each is always the right answer, and this note is the only place in these docs that states which that is.
+
+  **On arm64 nodes, `0.11.1` is a floor and not a preference.** Every operator image published before it, up to and including `0.11.0`, was pushed as a single-platform `amd64` manifest rather than a manifest list. That covers AWS Graviton nodegroups and any kind or k3d cluster on an Apple Silicon Mac. On containerd there is no manifest list to select from, so the pull **succeeds** and the container dies immediately with `exec /manager: exec format error` and exit code 255. The pod reads `CrashLoopBackOff`, not `ImagePullBackOff`. `0.11.1` is that image and nothing else: no API, CRD, controller, or chart-template change, which is why everything below still names `v0.11.0` as the release each behaviour landed in.
 
   **There is no version pinning between the CLI and the operator.** Every field either side has added is optional and additive, so a half that does not know about a field simply sees it absent and renders exactly as it did before. Nothing has to be upgraded in lockstep.
 
