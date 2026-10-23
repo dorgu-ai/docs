@@ -17,7 +17,7 @@ The self-healing loop is **on by default** as of chart 0.8.0. AI is the part you
 Omitting `--version` resolves the newest published chart. To pin an exact chart version, see the [installation guide](/operator/installation#pin-a-chart-version). Add `--set healthCheck.interval=30s` to tighten the loop for the demo; the default is 60s. Metrics-server integration is on by default and adds container-level usage signals.
 
 <Note>
-  To install the operator without the detection loop, add `--set healthCheck.enabled=false`. It will still validate personas and discover the cluster, but it will never open an incident or propose a fix.
+  To install the operator without the detection loop, add `--set healthCheck.enabled=false`. It will still validate personas, record their health, and discover the cluster, but from chart 0.12.0 it never opens an incident or proposes a fix. On chart 0.11.x and older that was not quite true: an older code path still opened OOM incidents and proposed fixes with detection off. Upgrade to 0.12.0 if you rely on turning detection off.
 </Note>
 
 ```bash
@@ -62,11 +62,7 @@ To manage the ClusterPersona yourself via GitOps instead, install with `--set op
 
 The operator only acts on applications that have an `ApplicationPersona`, and it correlates a signal to a persona **by name prefix**, so the persona name must be a prefix of the pod names.
 
-```bash
-dorgu persona apply ./my-app -n demo
-```
-
-Or apply one directly:
+For an app that is already running, `dorgu persona import -n demo --all --apply` creates one from the live Deployment. To see the loop on a fresh app, apply one directly:
 
 ```yaml
 apiVersion: dorgu.io/v1
@@ -198,7 +194,7 @@ kubectl -n demo get pods
     What the operator validates and how severity works
   </Card>
   <Card title="Configuration" icon="gear" href="/operator/configuration/overview">
-    Flags for webhooks, ArgoCD, Prometheus, and WebSocket
+    Flags for detection, safety, ArgoCD, and Prometheus
   </Card>
   <Card title="dorgu persona import" icon="download" href="/cli/commands/persona#persona-import">
     Create personas from the Deployments you already run

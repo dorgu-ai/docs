@@ -1,14 +1,16 @@
 ---
 title: "Cluster Onboarding"
-description: "Bootstrap a production-ready Kubernetes stack with Dorgu"
+description: "Install Dorgu onto a cluster and bring the apps already running under its watch"
 ---
 
 import CliInstall from '/snippets/cli-install.mdx';
 import OperatorInstall from '/snippets/operator-install-helm.mdx';
 
+Onboarding a cluster is two installs and one import. Dorgu does not install or manage anything else on your cluster: ingress, TLS, observability and GitOps stay with the tools you already use.
+
 ## Prerequisites
 
-Before onboarding a cluster, ensure you have:
+Before onboarding a cluster, make sure you have:
 
 - A running Kubernetes cluster (local or cloud)
 - `kubectl` installed and configured to reach the cluster
@@ -44,51 +46,43 @@ Choose a cluster environment based on your use case:
   </Step>
 
   <Step title="Install the Dorgu Operator">
-    The operator manages ClusterPersona and ApplicationPersona CRDs on your cluster. The chart is published to an OCI registry, so there is no Helm repo to add:
+    The chart is published to an OCI registry, so there is no Helm repo to add:
 
     <OperatorInstall />
 
     Failure detection is on out of the box. See the [installation guide](/operator/installation) for version pinning and how to turn detection off.
+
+    The operator creates a ClusterPersona named `dorgu-cluster` on startup and fills it with what it discovers: nodes, capacity, Kubernetes version, platform, and add-ons. There is nothing to create by hand.
   </Step>
 
-  <Step title="Create a ClusterPersona">
-    Initialize a ClusterPersona resource that captures your cluster's operational identity:
-
+  <Step title="See what Dorgu cannot watch yet">
     ```bash
-    dorgu cluster init --name my-cluster --environment development
+    dorgu health
     ```
 
-    This discovers cluster metadata (nodes, Kubernetes version, platform type, installed add-ons) and creates the ClusterPersona CRD.
-
-    Available environments: `development`, `staging`, `production`, `sandbox`.
+    Dorgu only watches workloads that have an `ApplicationPersona`. The `Unmonitored` section names every Deployment without one and prints the import command for its namespace.
   </Step>
 
-  <Step title="Run the setup wizard">
-    Install the blessed stack of production-ready infrastructure components:
-
+  <Step title="Import personas for the apps already running">
     ```bash
-    dorgu cluster setup
+    dorgu persona import -n apps --all > personas.yaml   # read them first
+    dorgu persona import -n apps --all --apply           # then create them
     ```
 
-    The setup command reads the ClusterPersona to determine the cluster environment and tailors component configuration accordingly (resource sizing, replica counts, storage classes).
-
-    To preview what will be installed without making changes:
-
-    ```bash
-    dorgu cluster setup --dry-run
-    ```
+    Read the warnings on stderr before you apply, particularly any about inferred resource limits. See [`dorgu persona import`](/cli/commands/persona#persona-import) for what is inferred and why.
   </Step>
 
-  <Step title="Verify the cluster">
-    Check that all components are healthy:
-
+  <Step title="Verify">
     ```bash
+    dorgu persona list -n apps
     dorgu cluster status
     ```
 
-    This reports node capacity, Kubernetes version, platform type, installed add-ons, namespace summary, and ApplicationPersona count.
+    Phase `Active` means each persona resolved to its Deployment. `cluster status` reports node capacity, Kubernetes version, platform type, installed add-ons, namespace summary, and ApplicationPersona count.
   </Step>
 </Steps>
+
+The [brownfield quickstart](/cli/quickstart#brownfield-a-cluster-that-already-has-apps) continues from here: it breaks one of the imported apps and walks the loop through diagnosis, review, and heal, including what happens when Helm or ArgoCD owns the workload.
 
 ## Verify Operator Installation
 
@@ -114,25 +108,6 @@ remediationactions.dorgu.io
 
 Fewer than five means an incomplete install. See [Verify installation](/operator/installation#verify-installation).
 
-## Blessed Stack
-
-The `dorgu cluster setup` command installs a curated set of production-ready components:
-
-<Note>
-  The versions below are upstream Helm chart versions for each third-party component — they are not Dorgu release versions.
-</Note>
-
-| Component | Chart Version | Description |
-|-----------|---------------|-------------|
-| **cert-manager** | v1.16.3 | Automated TLS certificate management via Let's Encrypt or internal CAs |
-| **ingress-nginx** | 4.11.3 | HTTP/S ingress controller for routing external traffic |
-| **CloudNativePG** | 0.24.0 | PostgreSQL operator, required by OpenObserve for metadata storage |
-| **OpenObserve** | 0.60.0 | Unified observability platform — logs, metrics, and traces in one tool (15m Helm timeout) |
-| **Argo CD** | 7.8.28 | Declarative GitOps continuous delivery engine |
-| **External Secrets** | 0.10.7 | Sync secrets from cloud stores (AWS Secrets Manager, Vault, GCP Secret Manager) — optional |
-
-Components are installed in dependency order. For example, cert-manager is installed before ingress-nginx (which needs TLS), and CloudNativePG is installed before OpenObserve (which needs PostgreSQL).
-
 ## Troubleshooting
 
 <AccordionGroup>
@@ -148,7 +123,7 @@ Components are installed in dependency order. For example, cert-manager is insta
     - **CRD version mismatch** — Helm only installs the CRDs on first install, never on upgrade. After upgrading the operator, re-apply them from the chart (see below).
   </Accordion>
 
-  <Accordion title="ClusterPersona creation fails with 'resource not found'">
+  <Accordion title="dorgu persona import or cluster status reports 'resource not found'">
     The CRDs may not be registered. They ship inside the Helm chart, so pull the chart and apply them manually:
 
     ```bash
@@ -156,31 +131,7 @@ Components are installed in dependency order. For example, cert-manager is insta
     kubectl apply -f dorgu-operator/crds/
     ```
 
-    Then retry:
-
-    ```bash
-    dorgu cluster init --name my-cluster --environment development
-    ```
-  </Accordion>
-
-  <Accordion title="Helm install times out for a blessed stack component">
-    Some components take longer to become ready. OpenObserve in particular uses an extended 15-minute Helm timeout (vs the default 5 minutes) because it depends on CloudNativePG PostgreSQL pods being fully provisioned first.
-
-    Re-run setup with verbose output to see real-time progress:
-
-    ```bash
-    dorgu cluster setup --verbose
-    ```
-
-    If a specific component fails, check its namespace for pending pods:
-
-    ```bash
-    kubectl get pods -n cert-manager
-    kubectl get pods -n ingress-nginx
-    kubectl get pods -n cnpg-system
-    kubectl get pods -n openobserve
-    kubectl get pods -n argocd
-    ```
+    Then retry the command.
   </Accordion>
 
   <Accordion title="Kind cluster TLS or networking issues">
@@ -212,16 +163,16 @@ Components are installed in dependency order. For example, cert-manager is insta
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="GitOps Mode" icon="git-alt" href="/cli/guides/gitops-mode">
-    Scaffold an ArgoCD App-of-Apps repository instead of imperative Helm install.
+  <Card title="Brownfield quickstart" icon="download" href="/cli/quickstart#brownfield-a-cluster-that-already-has-apps">
+    Break an imported app and heal it, end to end.
   </Card>
-  <Card title="Manifest Generation" icon="wand-magic-sparkles" href="/cli/guides/manifest-generation">
-    Deep dive into how Dorgu analyzes apps and generates manifests.
+  <Card title="Working with personas" icon="id-card" href="/cli/guides/working-with-personas">
+    What a persona holds and how the operator uses it.
   </Card>
-  <Card title="Cluster Commands" icon="terminal" href="/cli/commands/cluster">
-    Full reference for dorgu cluster init and dorgu cluster status.
+  <Card title="Cluster commands" icon="terminal" href="/cli/commands/cluster">
+    Full reference for dorgu cluster status.
   </Card>
-  <Card title="Cluster Setup" icon="server" href="/cli/commands/cluster-setup">
-    All flags and options for dorgu cluster setup.
+  <Card title="Ownership model" icon="user-lock" href="/ownership-model">
+    Which workloads Dorgu patches, and which it only advises on.
   </Card>
 </CardGroup>

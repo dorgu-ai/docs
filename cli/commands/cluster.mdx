@@ -1,42 +1,17 @@
 ---
 title: dorgu cluster
-description: Initialize and inspect ClusterPersona resources for cluster-wide operational context
+description: Inspect the ClusterPersona the operator discovers for your cluster
 ---
 
 ## Overview
 
-The `dorgu cluster` command group manages **ClusterPersona** custom resources. A ClusterPersona captures the operational identity of an entire Kubernetes cluster — its environment type, installed add-ons, resource capacity, and platform metadata — as a cluster-scoped CRD.
+The `dorgu cluster` command group reads **ClusterPersona** custom resources. A ClusterPersona captures the operational identity of an entire Kubernetes cluster as a cluster-scoped CRD: its environment type, installed add-ons, resource capacity, and platform metadata. It also carries the cluster's [self-healing policy](/cli/architecture/crds#self-healing-policy).
 
-## cluster init
+You do not create one. The operator creates a ClusterPersona named `dorgu-cluster` on startup if none exists (chart value `operator.autoCreateClusterPersona`, default `true`) and keeps its discovered fields current.
 
-### Synopsis
-
-```bash
-dorgu cluster init [flags]
-```
-
-Create a `ClusterPersona` resource for the current cluster. This discovers cluster metadata (nodes, version, platform, add-ons) and creates the CRD on the cluster.
-
-### Flags
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--name` | string | **required** | Cluster name |
-| `--environment` | string | `development` | Cluster environment: `development`, `staging`, `production`, `sandbox` |
-| `--dry-run` | bool | `false` | Print to stdout without applying |
-
-### Examples
-
-```bash
-# Initialize a development cluster
-dorgu cluster init --name my-dev-cluster
-
-# Initialize a production cluster
-dorgu cluster init --name prod-us-east --environment production
-
-# Preview the ClusterPersona without applying
-dorgu cluster init --name staging-eu --environment staging --dry-run
-```
+<Note>
+  CLI `v0.13.0` removed `cluster init`, `cluster setup` and `cluster info`. The operator already creates the ClusterPersona, and installing third-party add-ons is left to their own charts. See the [CLI migration guide](https://github.com/dorgu-ai/dorgu/blob/master/MIGRATION.md).
+</Note>
 
 ## cluster status
 
@@ -53,6 +28,7 @@ View the status and discovered metadata of a `ClusterPersona`. If the name is om
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-n`, `--name` | string | auto-detected | ClusterPersona name |
+| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
 
 ### Examples
 
@@ -61,7 +37,7 @@ View the status and discovered metadata of a `ClusterPersona`. If the name is om
 dorgu cluster status
 
 # View status by name
-dorgu cluster status my-dev-cluster
+dorgu cluster status dorgu-cluster
 
 # Explicitly pass the name via flag
 dorgu cluster status -n prod-us-east

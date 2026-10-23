@@ -1,73 +1,62 @@
 ---
-title: "Environment Variables"
-description: "All environment variables recognized by Dorgu"
+title: "Configuration"
+description: "The flags and environment variables the Dorgu CLI reads"
 ---
 
-# Environment Variables
+# Configuration
 
-Dorgu recognizes several environment variables for configuring LLM providers, Kubernetes access, and runtime behavior. Environment variables sit at priority level 5 in the [configuration hierarchy](/cli/configuration/overview) -- above built-in defaults but below config files and CLI flags.
-
-## Variables Reference
-
-| Variable | Purpose | Example |
-|----------|---------|---------|
-| `OPENAI_API_KEY` | OpenAI API access | `sk-proj-...` |
-| `ANTHROPIC_API_KEY` | Anthropic Claude API access | `sk-ant-...` |
-| `GEMINI_API_KEY` | Google Gemini API access | `AIza...` |
-| `GOOGLE_API_KEY` | Alternative Gemini API key | `AIza...` |
-| `OLLAMA_HOST` | Custom Ollama endpoint URL | `http://localhost:11434` |
-| `KUBECONFIG` | Path to kubeconfig file | `~/.kube/config` |
-
-## Precedence
-
-For **API keys**, environment variables take precedence over the global config file (`~/.config/dorgu/config.yaml`). This makes it easy to override keys per-session or in CI pipelines:
-
-```bash
-# Override the configured API key for this session
-export OPENAI_API_KEY="sk-proj-different-key..."
-dorgu generate .
-```
-
-For **other settings**, the standard [priority order](/cli/configuration/overview) applies: CLI flags and config files override environment variables.
-
-## DORGU_* Prefix
-
-Dorgu uses [Viper](https://github.com/spf13/viper) for configuration management with `AutomaticEnv()` enabled. This means any configuration key can be overridden via an environment variable with the `DORGU_` prefix, using underscores for nested keys:
-
-```bash
-# Override llm.provider via environment
-export DORGU_LLM_PROVIDER="anthropic"
-
-# Override defaults.namespace via environment
-export DORGU_DEFAULTS_NAMESPACE="staging"
-```
-
-<Info>
-The `DORGU_*` prefix variables follow the same naming convention as the config file keys, with dots replaced by underscores and the `DORGU_` prefix added. For example, `llm.model` becomes `DORGU_LLM_MODEL`.
-</Info>
-
-## Usage in CI/CD
-
-Environment variables are the recommended way to configure Dorgu in CI/CD pipelines. Store API keys as secrets and export them before running Dorgu:
-
-```yaml
-# GitHub Actions example
-steps:
-  - name: Generate manifests
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-    run: dorgu generate . --output manifests/
-```
-
-```yaml
-# GitLab CI example
-generate:
-  script:
-    - dorgu generate . --output manifests/
-  variables:
-    OPENAI_API_KEY: $OPENAI_API_KEY
-```
+The CLI has no configuration file. Every cluster command reads your kubeconfig through `kubectl`, and the few things you can change are global flags and environment variables.
 
 <Note>
-When running in CI without a TTY, Dorgu will not prompt for missing API keys. Make sure to set the appropriate environment variable or use the `--llm-provider` flag to explicitly disable LLM enhancement if no key is available.
+  CLI `v0.13.0` removed `.dorgu.yaml`, `~/.config/dorgu/config.yaml`, the global `--config` flag, and the `init` and `config` commands. They only configured manifest generation, which was removed with them. If you still have those files you can delete them; the CLI ignores them. See the [CLI migration guide](https://github.com/dorgu-ai/dorgu/blob/master/MIGRATION.md).
 </Note>
+
+## Choosing the cluster
+
+| Setting | Where | Effect |
+|---------|-------|--------|
+| `--context` | Global flag | kube-context for every `kubectl` call the command makes. Defaults to the kubeconfig's current-context. |
+| `--kubeconfig` | Flag on every cluster command | Path to the kubeconfig. Defaults to `kubectl`'s own resolution: `$KUBECONFIG`, then `~/.kube/config`. |
+| `KUBECONFIG` | Environment | Read by `kubectl` itself when `--kubeconfig` is not set. The CLI does not read it directly. |
+
+Every `kubectl` call goes through one helper that adds `--kubeconfig` and `--context` when you set them. A command therefore never reads from one cluster and writes to another, which matters most for [`remediation approve`](/cli/commands/remediation#remediation-approve) and [`heal`](/cli/commands/remediation#remediation-heal), the two commands that patch a workload.
+
+```bash
+# Review and approve against a specific context without switching kubectl's current one
+dorgu remediation list --context kind-dorgu-dev
+dorgu remediation approve fix-oom-api-server -n default --context kind-dorgu-dev
+```
+
+## Environment variables
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `DORGU_PROTECTED_CONTEXTS` | Comma-separated, case-insensitive substrings of kube-context names that `approve` and `heal` refuse to patch a workload through. An unset or blank value falls back to the default rather than disabling the guard. | `prod` |
+| `DORGU_DEBUG` | Any non-empty value shows `kubectl`'s raw output in error messages, including the klog lines the CLI normally strips. | unset |
+
+```bash
+# Refuse contexts whose names contain "production" or "live", instead of "prod"
+export DORGU_PROTECTED_CONTEXTS=production,live
+
+# See exactly what kubectl said when a command fails
+DORGU_DEBUG=1 dorgu health
+```
+
+<Warning>
+  **`DORGU_PROTECTED_CONTEXTS` is a name check.** It stops you healing the wrong cluster by accident; it is not a security boundary, because a context with a different name passes it. See [protected contexts](/cli/commands/remediation#protected-contexts) for exactly what is checked and when.
+</Warning>
+
+## Output
+
+| Setting | Where | Effect |
+|---------|-------|--------|
+| `--json` | Global flag | Structured output for scripts, CI, and agents |
+| `--no-color` | Global flag | Disable colored output |
+
+The CLI detects whether stdout is a terminal and drops colors and spinners when it is piped.
+
+## AI keys live in the operator, not the CLI
+
+The CLI makes no calls to a model provider and reads no API key. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` and `OLLAMA_HOST` are ignored since `v0.13.0`.
+
+AI diagnosis and AI remediation plans are produced by the operator, inside your cluster, with a key you put in a Secret, and only when you turn them on in the chart. See [AI setup](/operator/configuration/ai-setup).

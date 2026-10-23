@@ -234,7 +234,7 @@ RBAC bounds what is *possible*. These bound what Dorgu will *propose*, and they 
 | Rate limit | 5 remediations per persona per hour |
 | Concurrency | One active remediation per persona |
 | Failure cooldown | 30 minutes after a `Failed` remediation for the same persona |
-| Namespace deny list | `kube-system` and `dorgu-operator-system` always, plus `policies.selfHealing.excludeNamespaces` |
+| Namespace deny list | `kube-system` and the operator's own namespace always, plus the chart's `safety.excludedNamespaces` and `policies.selfHealing.excludeNamespaces`. See [protected namespaces](/operator/features/self-healing#protected-namespaces). |
 | Auto-executable steps | Only `persona-update` steps may be `autoExecutable`, enforced by a **CEL validation rule on the CRD** at the API server. No plan can escalate itself. |
 | Step commands | Sanitized before storage and re-checked before display: single line, must start with `kubectl `, no shell metacharacters, bounded length. **Never executed**, by the operator or the CLI. |
 | Rollback | Automatic. The operator restores `prePatchState` when verification finds health degraded. |
@@ -249,7 +249,7 @@ RBAC bounds what is *possible*. These bound what Dorgu will *propose*, and they 
 |---------|-----------------|
 | Cluster-scoped role | The operator uses a `ClusterRole`, because `ClusterPersona` discovery reads nodes and namespaces cluster-wide and personas can live in any namespace. Every cluster-wide grant on a non-`dorgu.io` resource is read-only. |
 | Namespace scoping | Not currently supported. Restricting the operator to a namespace list is not yet a chart option. |
-| Admission webhook | **Off by default** (`webhook.enabled: false`). In `advisory` mode it only warns; `enforcing` mode can reject Deployments that violate their persona. Turn it on deliberately, and run one cycle in `advisory` first. |
+| Admission webhook | None. Operator `v0.12.0` removed the Deployment validating webhook, so Dorgu sits in no admission path and cannot block a Deployment. Persona validation results are reported on status only. |
 | Metrics endpoint | The chart always renders `--metrics-secure=true`, so metrics are served over HTTPS with RBAC-protected authn and authz. There is no value that turns that off. |
 | Egress | Only needed for the Anthropic API, and only when AI is enabled. A default install makes no outbound calls. |
 | Image provenance | Published to `ghcr.io/dorgu-ai/dorgu-operator`; the Helm chart is an OCI artifact at `ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator`. |
@@ -265,7 +265,7 @@ RBAC bounds what is *possible*. These bound what Dorgu will *propose*, and they 
     The progressive trust levels and what is actually implemented
   </Card>
   <Card title="Helm values" icon="gear" href="/operator/configuration/helm-values">
-    Every chart option, including webhook mode and leader election
+    Every chart option, including protected namespaces and leader election
   </Card>
   <Card title="AI setup" icon="sparkles" href="/operator/configuration/ai-setup">
     Key handling, what is sent to Anthropic, and how to turn it off

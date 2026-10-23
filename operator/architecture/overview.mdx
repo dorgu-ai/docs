@@ -3,15 +3,15 @@ title: "Architecture Overview"
 description: "Operator design principles, project structure, and reconciliation model"
 ---
 
-The dorgu operator is a Kubernetes operator built with [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime) that manages two custom resources: **ApplicationPersona** and **ClusterPersona**. It follows the standard operator pattern of watching resources and reconciling desired state.
+The dorgu operator is a Kubernetes operator built with [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime) that manages five custom resources: **ApplicationPersona**, **ClusterPersona**, **IncidentMemory**, **RemediationAction**, and **DorguEvent**. It follows the standard operator pattern of watching resources and reconciling desired state.
 
 ## Design principles
 
 | Principle | Description |
 |-----------|-------------|
-| **Read-only workloads** | The operator NEVER writes to workload resources (Deployments, Services). It only updates Persona CRD status fields. |
-| **Fail-open** | If the operator is down or encounters errors, workloads are unaffected. The webhook uses `failurePolicy: Ignore`. |
-| **Opt-in features** | Only the core controllers are enabled by default. Webhook, Prometheus, and WebSocket require explicit opt-in. |
+| **Read-only workloads** | The operator NEVER writes to workload resources (Deployments, Services). It writes only its own CRDs. |
+| **Fail-open** | If the operator is down or encounters errors, workloads are unaffected. It registers no admission webhook, so nothing in the request path of your Deployments depends on it. |
+| **Opt-in features** | The core controllers and the self-healing loop are on by default. AI, Prometheus, and WebSocket require explicit opt-in. |
 | **No ArgoCD dependency** | ArgoCD integration uses the unstructured API — no compile-time dependency on ArgoCD types. |
 | **Graceful degradation** | Missing integrations (no Prometheus, no ArgoCD) are silently skipped without affecting core functionality. |
 
@@ -22,6 +22,9 @@ dorgu-operator/
 ├── api/v1/                           # CRD type definitions
 │   ├── applicationpersona_types.go   # ApplicationPersona spec + status
 │   ├── clusterpersona_types.go       # ClusterPersona spec + status
+│   ├── incidentmemory_types.go       # IncidentMemory spec + status
+│   ├── remediationaction_types.go    # RemediationAction spec + status
+│   ├── dorguevent_types.go           # DorguEvent spec
 │   ├── groupversion_info.go          # API group registration
 │   └── zz_generated.deepcopy.go     # Generated deep copy methods
 │
@@ -43,10 +46,14 @@ dorgu-operator/
 │   ├── metrics/                      # Prometheus integration
 │   │   └── prometheus_client.go      # PromQL queries for baselines
 │   │
-│   ├── webhook/                      # Admission webhook
-│   │   └── deployment_validator.go   # Validating webhook handler
+│   ├── detection/                    # Failure signal detection
+│   ├── diagnosis/                    # Rule-based and AI diagnosis
+│   ├── remediation/                  # Proposer, guardrails, executor
+│   ├── events/                       # DorguEvent pipeline and retention
+│   ├── llm/                          # Model provider clients
+│   ├── workload/                     # Live workload and ownership reads
 │   │
-│   └── websocket/                    # WebSocket server
+│   └── websocket/                    # Optional WebSocket server
 │       ├── server.go                 # Server lifecycle, client management
 │       ├── handlers.go               # Message handlers
 │       └── protocol.go              # Message types and payloads
@@ -101,11 +108,11 @@ flowchart TD
     Manager --> CP["Register ClusterPersona controller"]
     AP --> ArgoCheck{"ArgoCD enabled\n+ CRD exists?"}
     ArgoCheck -->|Yes| AW["Register ArgoCD watcher"]
-    ArgoCheck -->|No| WebhookCheck
-    AW --> WebhookCheck{"Webhook enabled?"}
-    WebhookCheck -->|Yes| WH["Register validating webhook"]
-    WebhookCheck -->|No| WSCheck
-    WH --> WSCheck{"WebSocket enabled?"}
+    ArgoCheck -->|No| HCCheck
+    AW --> HCCheck{"Health check enabled?"}
+    HCCheck -->|Yes| HC["Register health-check reconciler"]
+    HCCheck -->|No| WSCheck
+    HC --> WSCheck{"WebSocket enabled?"}
     WSCheck -->|Yes| WS["Start WebSocket server"]
     WSCheck -->|No| Health
     WS --> Health["Register health checks"]
@@ -114,14 +121,14 @@ flowchart TD
 
 ## CRD ownership model
 
-The operator follows a strict ownership model for the two CRDs:
+The operator follows a strict ownership model for the two persona CRDs:
 
 | CRD | Scope | Created by | Spec owned by | Status owned by |
 |-----|-------|------------|---------------|-----------------|
-| ApplicationPersona | Namespaced | User / CLI | User / CLI | Operator |
-| ClusterPersona | Cluster-scoped | User / CLI | User / CLI | Operator |
+| ApplicationPersona | Namespaced | You, `dorgu persona import`, or GitOps | You | Operator |
+| ClusterPersona | Cluster-scoped | Operator (auto-creates `dorgu-cluster`), or you via GitOps | You | Operator |
 
-The user (or CLI) creates and manages the `.spec` of each persona. The operator exclusively manages `.status`, writing validation results, health information, resource baselines, and ArgoCD sync state.
+You manage the `.spec` of each persona. The operator manages `.status`, writing validation results, health information, resource baselines, and ArgoCD sync state. The one exception is an approved remediation, where the operator patches the persona's `.spec` to the value you approved.
 
 ## RBAC model
 

@@ -21,9 +21,9 @@ Dorgu uses a progressive trust model that governs how much autonomy the system h
 Dorgu implements **Levels 0 through 2**. Levels 3 through 5 are planned.
 
 **CLI (Level 1-2: RECOMMEND / PROPOSE)**
-- Analyzes application source code and generates Kubernetes manifests
-- Produces ApplicationPersona CRDs that describe the desired operational profile
-- Proposes changes by generating files that a human reviews, commits, and deploys through existing GitOps workflows
+- Reads what the operator detected and proposed, and renders it for review: `dorgu health`, `dorgu incidents`, `dorgu remediation diff`
+- Produces ApplicationPersona CRDs from the Deployments already running (`dorgu persona import`), printed for review before anything reaches the cluster
+- Records your decision on the `RemediationAction` when you approve or reject
 - **Applies an approved remediation to the running workload, when that workload is Dorgu's to change.** When you run `dorgu remediation approve`, the CLI translates the fix you reviewed into a Deployment patch and applies it with your credentials, after showing you the exact namespace, Deployment, container, and fields, and asking for confirmation. If something else reconciles that Deployment, it declines instead and hands you the owner-shaped steps (see [ownership](#ownership-is-a-second-axis))
 
 **Operator (Level 0-2: OBSERVE / RECOMMEND / PROPOSE)**
@@ -31,7 +31,6 @@ Dorgu implements **Levels 0 through 2**. Levels 3 through 5 are planned.
 - Detects incidents, diagnoses root cause, and proposes an ordered fix as a `RemediationAction` — always in phase `Pending`, always requiring human approval
 - Validates running workloads against their ApplicationPersona constraints
 - Recommends improvements by writing suggestions to the persona's `status.recommendations` field
-- Proposes changes through admission webhook warnings (advisory mode) or denials (enforcing mode)
 - Applies an **approved** remediation's patch to the ApplicationPersona spec, then verifies the outcome and rolls it back automatically if health regresses
 
 Neither the CLI nor the Operator ever deploys, scales, or modifies a workload without a human decision.
@@ -88,7 +87,7 @@ The Operator is permitted to:
 
 - **Read** cluster state (Deployments, Pods, Nodes, ArgoCD Applications, Prometheus metrics)
 - **Validate** workloads against Persona constraints
-- **Recommend** changes via status fields, webhook warnings, and `RemediationAction` proposals
+- **Recommend** changes via status fields and `RemediationAction` proposals
 - **Update** Persona CRD status and learned fields
 - **Patch** the ApplicationPersona `spec` — but only the fields in a `RemediationAction` a human has approved
 

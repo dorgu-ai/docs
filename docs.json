@@ -18,54 +18,39 @@
             "pages": [
               "index",
               "cli/installation",
-              "cli/quickstart"
+              "cli/quickstart",
+              "changelog"
             ]
           },
           {
             "group": "Commands",
             "pages": [
               "cli/commands/overview",
-              "cli/commands/generate",
-              "cli/commands/init",
-              "cli/commands/config",
-              "cli/commands/persona",
-              "cli/commands/cluster",
-              "cli/commands/cluster-setup",
-              "cli/commands/watch",
-              "cli/commands/sync",
               "cli/commands/health",
               "cli/commands/incidents",
               "cli/commands/remediation",
-              "cli/commands/platform",
+              "cli/commands/persona",
+              "cli/commands/cluster",
               "cli/commands/version"
             ]
           },
           {
             "group": "Configuration",
             "pages": [
-              "cli/configuration/overview",
-              "cli/configuration/app-config",
-              "cli/configuration/global-config",
-              "cli/configuration/llm-providers",
               "cli/configuration/environment-variables"
             ]
           },
           {
             "group": "Guides",
             "pages": [
-              "cli/guides/manifest-generation",
               "cli/guides/cluster-onboarding",
-              "cli/guides/gitops-mode",
-              "cli/guides/working-with-personas",
-              "cli/guides/ci-cd-integration",
-              "cli/guides/language-support"
+              "cli/guides/working-with-personas"
             ]
           },
           {
             "group": "Architecture",
             "pages": [
               "cli/architecture/overview",
-              "cli/architecture/cli-pipeline",
               "cli/architecture/data-flow",
               "cli/architecture/crds",
               "cli/architecture/trust-model",
@@ -101,7 +86,6 @@
               "ownership-model",
               "operator/features/validation",
               "operator/features/cluster-discovery",
-              "operator/features/webhook",
               "operator/features/argocd",
               "operator/features/prometheus",
               "operator/features/websocket"
@@ -131,7 +115,7 @@
         },
         {
           "anchor": "Changelog",
-          "href": "https://github.com/dorgu-ai/dorgu/blob/master/CHANGELOG.md",
+          "href": "/changelog",
           "icon": "list"
         }
       ]
@@ -155,17 +139,34 @@
     }
   },
   "redirects": [
-    { "source": "/platform", "destination": "/cli/commands/platform" },
-    { "source": "/platform/index", "destination": "/cli/commands/platform" },
-    { "source": "/platform/installation", "destination": "/cli/commands/platform" },
-    { "source": "/platform/quickstart", "destination": "/cli/commands/platform" },
-    { "source": "/platform/development", "destination": "/cli/commands/platform" },
-    { "source": "/platform/features/dashboard", "destination": "/cli/commands/platform" },
-    { "source": "/platform/features/cluster-detail", "destination": "/cli/commands/platform" },
-    { "source": "/platform/features/real-time", "destination": "/cli/commands/platform" },
-    { "source": "/platform/api/rest", "destination": "/cli/commands/platform" },
-    { "source": "/platform/api/websocket", "destination": "/cli/commands/platform" },
-    { "source": "/platform/architecture/overview", "destination": "/cli/commands/platform" }
+    { "source": "/platform", "destination": "/cli/commands/overview" },
+    { "source": "/platform/index", "destination": "/cli/commands/overview" },
+    { "source": "/platform/installation", "destination": "/cli/commands/overview" },
+    { "source": "/platform/quickstart", "destination": "/cli/commands/overview" },
+    { "source": "/platform/development", "destination": "/cli/commands/overview" },
+    { "source": "/platform/features/dashboard", "destination": "/cli/commands/overview" },
+    { "source": "/platform/features/cluster-detail", "destination": "/cli/commands/overview" },
+    { "source": "/platform/features/real-time", "destination": "/cli/commands/overview" },
+    { "source": "/platform/api/rest", "destination": "/cli/commands/overview" },
+    { "source": "/platform/api/websocket", "destination": "/cli/commands/overview" },
+    { "source": "/platform/architecture/overview", "destination": "/cli/commands/overview" },
+    { "source": "/cli/commands/generate", "destination": "/cli/commands/overview" },
+    { "source": "/cli/commands/init", "destination": "/cli/commands/overview" },
+    { "source": "/cli/commands/config", "destination": "/cli/configuration/environment-variables" },
+    { "source": "/cli/commands/cluster-setup", "destination": "/cli/commands/cluster" },
+    { "source": "/cli/commands/platform", "destination": "/cli/commands/overview" },
+    { "source": "/cli/commands/sync", "destination": "/cli/commands/persona" },
+    { "source": "/cli/commands/watch", "destination": "/cli/commands/health" },
+    { "source": "/cli/configuration/overview", "destination": "/cli/configuration/environment-variables" },
+    { "source": "/cli/configuration/app-config", "destination": "/cli/configuration/environment-variables" },
+    { "source": "/cli/configuration/global-config", "destination": "/cli/configuration/environment-variables" },
+    { "source": "/cli/configuration/llm-providers", "destination": "/operator/configuration/ai-setup" },
+    { "source": "/cli/guides/manifest-generation", "destination": "/cli/guides/cluster-onboarding" },
+    { "source": "/cli/guides/language-support", "destination": "/cli/guides/cluster-onboarding" },
+    { "source": "/cli/guides/gitops-mode", "destination": "/ownership-model" },
+    { "source": "/cli/guides/ci-cd-integration", "destination": "/cli/commands/health" },
+    { "source": "/cli/architecture/cli-pipeline", "destination": "/cli/architecture/overview" },
+    { "source": "/operator/features/webhook", "destination": "/operator/features/validation" }
   ],
   "contextual": {
     "options": [
