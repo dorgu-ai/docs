@@ -92,18 +92,32 @@ There are two knobs, not one, and they are worth separating before you set eithe
 | `llm.provider` | `""` | `claude` enables Anthropic. Empty disables AI entirely. `gemini` enables AI *diagnosis* only, since the remediation planner requires `claude`. |
 | `llm.model` | `""` | Model override. Empty uses the provider default (`claude-sonnet-4-6` for the planner). |
 | `llm.existingSecret` | `""` | Name of a pre-created Secret holding the key. **Preferred.** |
-| `llm.existingSecretKey` | `ANTHROPIC_API_KEY` | Key within that Secret |
+| `llm.existingSecretKey` | `""` | Key within that Secret. Empty means `ANTHROPIC_API_KEY` for `claude` and `GEMINI_API_KEY` for `gemini` |
 | `llm.apiKey` | `""` | Dev only — a raw key, stored in a chart-managed Secret. Requires `createSecret=true`. |
 | `llm.createSecret` | `false` | When true and `apiKey` is set, the chart creates the Secret for you |
 | `aiRemediation.enabled` | `false` | Maps to `--enable-ai-remediation`. Only has effect when `llm.provider` is set. |
 
-{/* TODO(P0): gemini chart values */}
+### Using Gemini
+
+`llm.provider=gemini` turns on AI *diagnosis* with Google's Gemini (default model `gemini-2.0-flash`). The remediation planner stays rule-based, because AI-planned remediation needs `claude`; setting `aiRemediation.enabled=true` with Gemini changes nothing.
+
+```bash
+kubectl create secret generic dorgu-llm -n dorgu-system \
+  --from-literal=GEMINI_API_KEY=<your-key>
+
+helm upgrade --install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  --namespace dorgu-system \
+  --set llm.provider=gemini \
+  --set llm.existingSecret=dorgu-llm
+```
+
+The chart injects the key as `GEMINI_API_KEY` from the Secret, and the operator sends it to Google in a request header, never in the URL. Any other `llm.provider` value fails `helm install` with an error instead of starting an operator with AI silently off.
 
 <Warning>
   Prefer `llm.existingSecret` in any shared or production cluster. `llm.apiKey` never reaches the pod spec — the chart still delivers it via `secretKeyRef` — but it *is* recorded in the Helm release, so `helm get values` and `helm template` will print the raw key to anyone with access. `existingSecret` keeps the key out of Helm entirely.
 </Warning>
 
-If neither `llm.existingSecret` nor a chart-managed Secret is configured, the chart renders no `env:` block, the operator finds no `ANTHROPIC_API_KEY`, and it logs `LLM provider configured but no API key found, AI diagnosis disabled` — then runs rule-based.
+If neither `llm.existingSecret` nor a chart-managed Secret is configured, the chart renders no `env:` block, the operator finds no API key for the provider, and it logs `LLM provider configured but no API key found, AI diagnosis disabled` — then runs rule-based.
 
 ## Egress
 

@@ -203,9 +203,8 @@ kubectl -n dorgu-system get deploy dorgu-operator \
 
 Both AI values default off, so a chart installed with no `--set` flags makes no API calls and spends nothing. Rules run either way.
 
-The key is always delivered to the pod as an environment variable via `secretKeyRef` (`ANTHROPIC_API_KEY` for `claude`), and the chart never passes it as a container argument.
+The key is always delivered to the pod as an environment variable via `secretKeyRef` (`ANTHROPIC_API_KEY` for `claude`, `GEMINI_API_KEY` for `gemini`), and the chart never passes it as a container argument. `llm.existingSecretKey` defaults to the matching name, and any `llm.provider` other than `claude` or `gemini` fails the install.
 
-{/* TODO(P0): gemini chart values */}
  See [AI setup](/operator/configuration/ai-setup) for the full walkthrough and the caveat about `llm.apiKey` being visible in `helm get values`.
 
 <Warning>
