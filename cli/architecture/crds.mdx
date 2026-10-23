@@ -60,24 +60,24 @@ The spec and status of an ApplicationPersona are owned by different actors. This
 
 ```mermaid
 flowchart LR
-    subgraph Spec ["Spec - Owned by CLI/GitOps"]
+    subgraph Spec ["Spec - Owned by you/GitOps"]
         SpecFields["Desired State"]
     end
     subgraph Status ["Status - Owned by Operator"]
         StatusFields["Observed State"]
     end
-    CLI["CLI / GitOps"] -->|writes| Spec
+    You["You / GitOps"] -->|writes| Spec
     Operator["Operator"] -->|writes| Status
     Operator -->|reads| Spec
 ```
 
 | Actor | Writes | Mechanism |
 |-------|--------|-----------|
-| CLI / GitOps | `spec` | `dorgu persona apply` or ArgoCD sync |
+| You / GitOps | `spec` | `kubectl apply`, `dorgu persona import --apply`, or a GitOps sync |
 | Operator | `status` | Status subresource updates during reconciliation |
 | Operator | `spec` | Only via a **human-approved** RemediationAction |
 
-The CLI and GitOps tools define the desired state in the spec. The Operator observes the cluster and writes its findings to the status.
+You and your GitOps tools define the desired state in the spec. The Operator observes the cluster and writes its findings to the status.
 
 The one exception is remediation: when you approve a `RemediationAction`, the Operator applies that action's JSON merge patch to the ApplicationPersona `spec`. That is a change you explicitly authorized, scoped to the fields in the proposal you reviewed. Nothing else lets the Operator write a spec.
 
@@ -502,4 +502,4 @@ Records are bounded **by age and by count**: `dorguEvents.retention` (default `2
 | `k8sEventRef` | string | No | Original Kubernetes Event UID, used for deduplication |
 | `ttl` | duration | No | Per-record retention override. Absent means the operator's `dorguEvents.retention` applies (default 24h). |
 
-Stream them live with `dorgu watch events`.
+Follow them live with `kubectl get dorguevents -A -w`.
