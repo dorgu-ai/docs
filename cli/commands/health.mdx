@@ -33,10 +33,11 @@ It also names what it **cannot** see: any Deployment with no matching `Applicati
 |------|------|---------|-------------|
 | `-n, --namespace` | string | all namespaces | Filter incidents by namespace, and include that namespace's Deployments in the unmonitored check even if it is a cluster add-on namespace |
 | `--exit-code` | bool | `false` | Exit 2 when critical incidents are active, 3 when health cannot be judged. For monitoring scripts. |
-| `-w, --watch` | bool | `false` | Stream health updates in real time over WebSocket. Requires the operator running with `--enable-websocket`. |
-| `--operator-url` | string | `ws://localhost:9090/ws` | WebSocket URL of the operator, used with `--watch` |
 | `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
 | `--json` | bool | `false` | Output as JSON (inherited global flag) |
+| `--context` | string | the kubeconfig's current-context | kube-context to read (inherited global flag) |
+
+CLI `v0.13.0` removed `--watch` and `--operator-url`, which streamed over the operator's WebSocket. To follow health over time, re-run `dorgu health`, or watch the CRDs directly with `kubectl get incidentmemories -A -w` and `kubectl get remediationactions -A -w`.
 
 ## Output sections
 
@@ -112,10 +113,6 @@ Requested still reports without it. An absent figure is never printed as `0`, an
   The whole section is bounded by a 15-second deadline of its own, because listing every pod is the expensive call in `dorgu health` and one slow pod list should not take the node table, the incident list, and the exit code down with it. On a timeout the section is omitted and the reason is printed. Saturation also needs the node list to have succeeded, since allocatable comes from it.
 </Note>
 
-<Note>
-  **`dorgu health --watch` labels the operator's figure `cpu-requested=` and `mem-requested=`.** The stream carries `ClusterPersona` values rather than the CLI's own computation, and a bare `cpu=25%` reads as usage when it is requests.
-</Note>
-
 ## Unmonitored Deployments
 
 Dorgu only watches workloads that have an `ApplicationPersona`. A Deployment without one raises no incident no matter what it does, so reporting `Active Incidents: 0` for a cluster full of unmonitored apps would present a blind spot as health.
@@ -134,7 +131,7 @@ Unmonitored: 3 Deployment(s) have no ApplicationPersona and are not being watche
 | Cap | The printed list stops at 10 names and says how many it left out. The count and the `--json` list are never capped. |
 | Hint | One `dorgu persona import` line per namespace that has uncovered Deployments. |
 | Nothing to report | A fully covered cluster prints no section at all. |
-| CRD missing | Reported as `the ApplicationPersona CRD is not installed`, which is a fact about the operator rather than about your apps, with `dorgu cluster setup` as the hint. |
+| CRD missing | Reported as `the ApplicationPersona CRD is not installed`, which is a fact about the operator rather than about your apps, with the `helm install` command for the operator as the hint. |
 
 Coverage is decided with the same [discovery chain](/operator/features/self-healing#how-a-persona-finds-its-deployment) the operator uses, so a Deployment labelled only on its pod template counts as monitored. See [`dorgu persona import`](/cli/commands/persona#persona-import).
 
@@ -178,6 +175,9 @@ dorgu health --exit-code
 
 # Use a specific kubeconfig
 dorgu health --kubeconfig /path/to/kubeconfig
+
+# Check a cluster other than the current context
+dorgu health --context kind-dorgu-dev
 ```
 
 ```bash
