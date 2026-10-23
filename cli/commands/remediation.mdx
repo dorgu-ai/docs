@@ -690,7 +690,7 @@ This is the same class as the field-manager footprint warning, with one delibera
 
 ### Protected contexts
 
-Before `approve` or `heal` patches a workload, the CLI checks the name of the kube-context it is about to write through and refuses if the name contains a protected pattern. The context it checks is the global `--context` value when you pass one, and the kubeconfig's current-context otherwise, so the name it checks is always the context the patch goes to.
+Before `approve` writes an approval, and before `heal` patches a workload, the CLI checks the name of the kube-context it is about to write through and refuses if the name contains a protected pattern. An approval is refused with or without `--no-heal`, because approving is itself a change: it tells the operator to update the persona. The context it checks is the global `--context` value when you pass one, and the kubeconfig's current-context otherwise, so the name it checks is always the context the patch goes to.
 
 The patterns come from `DORGU_PROTECTED_CONTEXTS`: comma-separated, case-insensitive substrings. The default is `prod`. An unset or blank value falls back to `prod` rather than turning the guard off, because an empty variable is far more often an accident than a decision to heal production.
 
@@ -712,7 +712,7 @@ refusing to heal: kube-context "eks-prod-eu" matches protected pattern "prod" (D
 ```
 
 <Warning>
-  **This is a name check and nothing more.** It is a seatbelt against healing the wrong cluster by accident, not a security boundary: a context with a different name passes it. `aws eks update-kubeconfig` names contexts after the cluster ARN, so an EKS cluster whose name contains `prod` is refused under the default. Narrow the patterns if that is not what you want. `approve --no-heal` patches no workload and does not run the check.
+  **This is a name check and nothing more.** It is a seatbelt against healing the wrong cluster by accident, not a security boundary: a context with a different name passes it. `aws eks update-kubeconfig` names contexts after the cluster ARN, so an EKS cluster whose name contains `prod` is refused under the default. Narrow the patterns if that is not what you want.
 </Warning>
 
 <Note>

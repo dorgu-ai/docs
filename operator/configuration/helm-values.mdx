@@ -235,6 +235,16 @@ Set `autoCreateClusterPersona: false` if you manage ClusterPersonas through GitO
 | `metrics.secure` | bool | `true` | Serve metrics over HTTPS with authentication |
 | `healthProbe.bindAddress` | string | `:8081` | Health and readiness probe bind address |
 
+With `metrics.enabled=true` the chart creates a `<release>-metrics` Service on the metrics port and a `<release>-metrics-reader` ClusterRole. With `metrics.secure=true` every scrape is authenticated and authorized, so bind the reader role to whatever scrapes the operator:
+
+```bash
+kubectl create clusterrolebinding prometheus-dorgu-metrics \
+  --clusterrole=dorgu-operator-metrics-reader \
+  --serviceaccount=monitoring:prometheus
+```
+
+The operator itself needs `create` on `tokenreviews` and `subjectaccessreviews` to check those scrapes, and the chart grants both only while `metrics.secure=true`. Counters for incidents, proposals and remediation transitions are exported as `dorgu_incidents_total`, `dorgu_proposals_total` and `dorgu_remediation_transitions_total`.
+
 ### ArgoCD
 
 | Value | Type | Default | Description |

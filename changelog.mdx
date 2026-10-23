@@ -35,6 +35,8 @@ This page covers the releases that change how you use Dorgu. The full history, r
   **Fixed**
 
   - A `kubectl` flag value equal to a verb name, as in `kubectl -n logs delete deployment/foo`, no longer makes a write look read-only. On a workload Dorgu does not own, a step command is printed only if it reads, and the verb is now found by position rather than by scanning for the first word that looks like one.
+  - `kubectl auth reconcile` and `kubectl rollout -n status restart` are no longer classified as read-only. `auth` and `rollout` are judged by the subcommand that immediately follows them.
+  - [Protected contexts](/cli/commands/remediation#protected-contexts) now refuse every `approve`, including `--no-heal`. Approving is itself a change, and the refusal used to suggest `--no-heal` as the way through.
 
   ## Operator v0.12.0 and Helm chart 0.12.0
 
@@ -52,8 +54,11 @@ This page covers the releases that change how you use Dorgu. The full history, r
   **Added**
 
   - [`safety.excludedNamespaces`](/operator/configuration/helm-values#remediation-safety) (flag `--safety-excluded-namespaces`): more namespaces Dorgu never proposes a remediation in. The ClusterPersona's `excludeNamespaces` still applies alongside it.
+  - The chart creates a metrics Service and a `metrics-reader` ClusterRole, and exports `dorgu_incidents_total`, `dorgu_proposals_total` and `dorgu_remediation_transitions_total`. See [Metrics and probes](/operator/configuration/helm-values#metrics-and-probes).
 
   **Fixed**
 
   - Gemini: the API key is sent in a request header rather than in the URL, and the chart injects the environment variable that matches the chosen `llm.provider`. See [Using Gemini](/operator/configuration/ai-setup#using-gemini).
+  - Scraping `/metrics` on a Helm install no longer fails with a 500. With secure metrics on, the chart now grants the operator what it needs to authenticate scrapers.
+  - A protected namespace is refused before the AI planner is asked for a plan, so incidents there no longer cost a model call or send that namespace's details to the provider.
 </Update>
