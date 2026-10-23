@@ -15,11 +15,6 @@ image:
   tag: ""  # Defaults to chart appVersion
   pullPolicy: IfNotPresent
 
-webhook:
-  enabled: false
-  mode: advisory
-  port: 9443
-
 validation:
   requeueInterval: 60s
 
@@ -55,6 +50,9 @@ websocket:
 healthCheck:
   enabled: true
   interval: 60s
+
+safety:
+  excludedNamespaces: []
 
 metricsServer:
   enabled: true
@@ -113,23 +111,21 @@ affinity: {}
 | `tolerations` | array | `[]` | Pod tolerations |
 | `affinity` | object | `{}` | Pod affinity rules |
 
-### Webhook
+### Removed: the validating webhook
 
-| Value | Type | Default | Description |
-|-------|------|---------|-------------|
-| `webhook.enabled` | bool | `false` | Enable validating admission webhook |
-| `webhook.mode` | string | `advisory` | `advisory` or `enforcing` |
-| `webhook.port` | int | `9443` | Webhook server port |
+Chart 0.12.0 removed the Deployment validating admission webhook, its `webhook.enabled`, `webhook.mode` and `webhook.port` values, its Service, and its `ValidatingWebhookConfiguration`. It never produced a warning or a denial in any release, so removing it changes no admission behaviour on your cluster.
 
-<Info>
-The webhook requires TLS certificates. In production, use cert-manager to provision certificates automatically. The Helm chart includes the necessary annotations when cert-manager is available.
-</Info>
+<Warning>
+  **An install or upgrade that still sets `webhook.enabled=true` fails** with a message saying the webhook was removed, rather than silently dropping the value. Remove `webhook.*` from your values files before upgrading to 0.12.0. If you run the binary directly, the `--enable-webhook`, `--webhook-mode`, `--webhook-cert-path`, `--webhook-cert-name` and `--webhook-cert-key` flags are gone too, and passing one stops the operator from starting.
+</Warning>
+
+Persona validation itself is unaffected: the controller still validates every Deployment against its persona and records the result on the persona's status. See [validation](/operator/features/validation).
 
 ### Self-healing
 
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
-| `healthCheck.enabled` | bool | `true` | Enable the health-check reconciler: detection, diagnosis, and remediation proposals. **On by default since chart 0.8.0.** Set it to `false` to run without self-healing. |
+| `healthCheck.enabled` | bool | `true` | Enable the health-check reconciler: detection, diagnosis, and remediation proposals. **On by default since chart 0.8.0**, and in the operator binary itself since 0.12.0. Set it to `false` to run without self-healing. |
 | `healthCheck.interval` | duration | `60s` | How often the reconciler runs a detection cycle |
 | `metricsServer.enabled` | bool | `true` | Enable metrics-server integration for container-level CPU/memory detection |
 
@@ -140,11 +136,36 @@ kubectl -n dorgu-system get deploy dorgu-operator \
   -o jsonpath='{.spec.template.spec.containers[0].args}{"\n"}'
 ```
 
-When `healthCheck.enabled` is `false`, the operator still validates personas and discovers the cluster; it just never opens incidents or proposes fixes. Setting `metricsServer.enabled=false` passes `--enable-metrics-server=false`; OOM and crash-loop detection read pod status and are unaffected, but usage and saturation signals go dark. See [Self-healing](/operator/features/self-healing).
+When `healthCheck.enabled` is `false`, the operator still validates personas, records their health, and discovers the cluster, and from chart 0.12.0 it never opens an incident or proposes a fix. Chart 0.11.x and older did not fully honour this: an older code path still opened `OOMKilled` incidents and wrote `RemediationAction` proposals with detection off, without the guardrails the health-check path applies. Setting `metricsServer.enabled=false` passes `--enable-metrics-server=false`; OOM and crash-loop detection read pod status and are unaffected, but usage and saturation signals go dark. See [Self-healing](/operator/features/self-healing).
 
 <Warning>
   **Upgrading from a chart older than 0.8.0 turns detection on.** A release that never set `healthCheck.enabled` will start detecting after the upgrade: expect `IncidentMemory` records to appear, and `RemediationAction` proposals wherever the ClusterPersona self-healing mode is `propose` (the default). Nothing is applied without approval. To keep the old behaviour, upgrade with `--set healthCheck.enabled=false`.
 </Warning>
+
+### Remediation safety
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `safety.excludedNamespaces` | array | `[]` | Extra namespaces Dorgu never proposes a remediation in. Maps to `--safety-excluded-namespaces`. **New in chart 0.12.0.** |
+
+Dorgu never proposes a remediation for a persona in a protected namespace. Three sources make up the list:
+
+- **`kube-system`**, always.
+- **The namespace the operator runs in**, always. The chart sets `POD_NAMESPACE` on the operator container from the downward API, so with the documented install that is `dorgu-system`, and with any other `--namespace` it is that one.
+- **Anything you add**, through `safety.excludedNamespaces` here or through `spec.policies.selfHealing.excludeNamespaces` on the [ClusterPersona](/cli/architecture/crds#self-healing-policy). Both are honoured.
+
+```yaml
+safety:
+  excludedNamespaces:
+    - payments
+    - ingress-nginx
+```
+
+Detection is not affected. An incident in a protected namespace is still recorded as an `IncidentMemory` with its diagnosis; the operator just proposes no fix for it.
+
+<Note>
+  **Fixed in operator v0.12.0.** Older releases protected a hardcoded `dorgu-operator-system`, the kustomize default, rather than the namespace the chart actually installs into. With the documented `--namespace dorgu-system` install, Dorgu's own namespace was not protected at all. Upgrade if you run 0.11.x.
+</Note>
 
 ### DorguEvent retention
 
@@ -182,7 +203,10 @@ kubectl -n dorgu-system get deploy dorgu-operator \
 
 Both AI values default off, so a chart installed with no `--set` flags makes no API calls and spends nothing. Rules run either way.
 
-The key is always delivered to the pod as the `ANTHROPIC_API_KEY` environment variable via `secretKeyRef`, and the chart never passes it as a container argument. See [AI setup](/operator/configuration/ai-setup) for the full walkthrough and the caveat about `llm.apiKey` being visible in `helm get values`.
+The key is always delivered to the pod as an environment variable via `secretKeyRef` (`ANTHROPIC_API_KEY` for `claude`), and the chart never passes it as a container argument.
+
+{/* TODO(P0): gemini chart values */}
+ See [AI setup](/operator/configuration/ai-setup) for the full walkthrough and the caveat about `llm.apiKey` being visible in `helm get values`.
 
 <Warning>
   A Secret you created yourself with `kubectl create secret`, which is the recommended path, is not part of the Helm release and survives `helm uninstall`. Delete it explicitly: [Uninstall](/operator/installation#uninstall) leads with it.
@@ -233,12 +257,12 @@ Example: `http://prometheus-server.monitoring:9090`
 
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
-| `websocket.enabled` | bool | `false` | Enable WebSocket server for CLI communication |
+| `websocket.enabled` | bool | `false` | Enable the operator's WebSocket server |
 | `websocket.port` | int | `9090` | WebSocket server port |
 | `websocket.service.type` | string | `ClusterIP` | Service type for the WebSocket endpoint |
 | `websocket.service.port` | int | `9090` | Service port |
 
-When enabled, the chart creates a Service on the specified port.
+When enabled, the chart creates a Service on the specified port. No Dorgu CLI command connects to it since CLI `v0.13.0`, so leave it off unless you have your own client. See [WebSocket server](/operator/features/websocket).
 
 ### Resources
 
@@ -275,9 +299,6 @@ Create the Secret out of band, then:
 healthCheck:
   interval: 30s
 
-websocket:
-  enabled: true
-
 llm:
   provider: claude
   existingSecret: dorgu-llm
@@ -302,9 +323,9 @@ healthCheck:
 leaderElection:
   enabled: true
 
-webhook:
-  enabled: true
-  mode: enforcing
+safety:
+  excludedNamespaces:
+    - payments
 
 argocd:
   enabled: true
@@ -312,9 +333,6 @@ argocd:
 prometheus:
   enabled: true
   url: "http://prometheus-server.monitoring:9090"
-
-websocket:
-  enabled: true
 
 resources:
   limits:

@@ -50,7 +50,7 @@ There are two knobs, not one, and they are worth separating before you set eithe
   <Step title="Install or upgrade the operator">
     <OperatorInstallAI />
 
-    This is the [canonical install command](/operator/installation#helm-recommended) plus the four AI flags, which are the only ones AI needs. Detection and metrics-server integration are already on by default; add `--set websocket.enabled=true` if you also want live `dorgu watch` streaming.
+    This is the [canonical install command](/operator/installation#helm-recommended) plus the four AI flags, which are the only ones AI needs. Detection and metrics-server integration are already on by default.
 
     Drop the last flag, `aiRemediation.enabled=true`, for AI diagnosis with rule-written plans. That is the setting the [default](#why-it-is-off-and-what-that-costs-you) recommends, and it is the one to start from.
 
@@ -97,6 +97,8 @@ There are two knobs, not one, and they are worth separating before you set eithe
 | `llm.createSecret` | `false` | When true and `apiKey` is set, the chart creates the Secret for you |
 | `aiRemediation.enabled` | `false` | Maps to `--enable-ai-remediation`. Only has effect when `llm.provider` is set. |
 
+{/* TODO(P0): gemini chart values */}
+
 <Warning>
   Prefer `llm.existingSecret` in any shared or production cluster. `llm.apiKey` never reaches the pod spec — the chart still delivers it via `secretKeyRef` — but it *is* recorded in the Helm release, so `helm get values` and `helm template` will print the raw key to anyone with access. `existingSecret` keeps the key out of Helm entirely.
 </Warning>
@@ -131,9 +133,9 @@ kubectl delete secret dorgu-llm -n dorgu-system
   **That Secret is yours, not Helm's, so `helm uninstall` will not remove it.** You created it out of band with `kubectl create secret` so the key would never pass through Helm values, and the price of that is that removing the release leaves the key in the cluster. Whether you are turning AI off or removing Dorgu entirely, delete it explicitly. The full teardown, which leads with exactly this, is [Uninstall](/operator/installation#uninstall).
 </Warning>
 
-## CLI-side LLMs are separate
+## The CLI never calls a model
 
-The operator's AI is unrelated to the CLI's LLM configuration. `dorgu generate` can use OpenAI, Anthropic, Gemini, or Ollama from your laptop; none of that configuration reaches the operator, and the operator's key is never used by the CLI. See [LLM providers](/cli/configuration/llm-providers) for the full comparison.
+The operator is the only part of Dorgu that talks to a model provider. The CLI reads no API key and makes no inference calls: it reads what the operator wrote and applies what you approve. CLI `v0.13.0` removed the CLI's own LLM integration along with the manifest generator that used it, so `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` and `OLLAMA_HOST` on your laptop have no effect. See [CLI configuration](/cli/configuration/environment-variables).
 
 <CardGroup cols={2}>
   <Card title="Self-healing" icon="heart-pulse" href="/operator/features/self-healing">
