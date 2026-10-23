@@ -1,6 +1,6 @@
 ---
 title: Working with Personas
-description: Generate, apply, and monitor ApplicationPersona CRDs
+description: Import ApplicationPersonas from running Deployments, and monitor them
 ---
 
 ## What is an ApplicationPersona
@@ -13,64 +13,54 @@ An **ApplicationPersona** is a Kubernetes Custom Resource that represents the id
 - **Security policies** — security contexts, pod security standards
 - **Ownership info** — team, repository, contact details
 
-Think of it as a "living document" for your application. Once applied to a cluster, the Dorgu Operator continuously validates the persona against actual cluster state — flagging drift, misconfigurations, and degraded health.
+Think of it as a living record of your application. Once it is on the cluster, the Dorgu Operator continuously validates the persona against actual cluster state, and the self-healing loop correlates every failure signal to it. **A workload without a persona is not watched**: it raises no incident and gets no proposed fix.
 
-## Where to start
+## Creating personas
 
-The starting point decides the command.
-
-| You have | Use | Reads |
-|----------|-----|-------|
-| Local source with a `Dockerfile` or `docker-compose.yml` | `dorgu persona generate` / `dorgu persona apply` | Your working tree |
-| Deployments already running on the cluster | [`dorgu persona import`](/cli/commands/persona#persona-import) | The live Deployment spec |
-
-<Tip>
-  **On an existing cluster, start with import.** `generate` and `apply` need local source, which you do not have for the twenty services already running. Import reads the Deployments instead:
-
-  ```bash
-  dorgu health                                # which Deployments have no persona
-  dorgu persona import -n apps --all          # read the personas it would create
-  dorgu persona import -n apps --all --apply  # create them
-  ```
-
-  Requires CLI v0.9.0 or newer. Full walkthrough: [brownfield quickstart](/cli/quickstart#brownfield-a-cluster-that-already-has-apps).
-</Tip>
-
-## Persona lifecycle
+You create personas from the Deployments already running on your cluster with [`dorgu persona import`](/cli/commands/persona#persona-import). It reads each live Deployment and synthesizes a persona from what is already in the spec: resources, probes, replicas, ports, image, and ownership labels. It needs no local source, no Dockerfile, and no relabelling.
 
 <Steps>
-  <Step title="Generate">
-    Analyze your application and produce a persona YAML manifest. Use `--dry-run` to preview without writing files:
-
+  <Step title="Find what is not watched">
     ```bash
-    dorgu persona generate ./my-app --dry-run
+    dorgu health
     ```
 
-    This inspects the `Dockerfile`, dependency manifests, source code, and `.dorgu.yaml` config to produce a complete `ApplicationPersona` resource.
-
-    On a cluster that already runs the app, use [`dorgu persona import`](/cli/commands/persona#persona-import) instead: it needs no local source and no Dockerfile.
+    The `Unmonitored` section names every Deployment with no persona, with the import command for its namespace.
   </Step>
 
-  <Step title="Apply">
-    Analyze and apply the persona directly to your cluster in a single command:
-
+  <Step title="Read the personas import would create">
     ```bash
-    dorgu persona apply ./my-app -n commerce
+    dorgu persona import -n commerce --all > personas.yaml
     ```
 
-    This combines generation and `kubectl apply` — the CLI produces the YAML and pipes it to kubectl targeting the specified namespace.
+    YAML goes to stdout and every warning goes to stderr, so the file is clean and you still see what was inferred. Pay attention to inferred resource limits: remediation resizes from the persona, so a limit Dorgu had to derive is one you should check.
+  </Step>
+
+  <Step title="Create them">
+    ```bash
+    kubectl apply -f personas.yaml
+    # or, without the file:
+    dorgu persona import -n commerce --all --apply
+    ```
+
+    Committing `personas.yaml` to the repository your GitOps tool syncs is a good way to keep them under the same review as the rest of your manifests.
   </Step>
 
   <Step title="Monitor status">
-    Check the reconciliation status of your persona:
-
     ```bash
+    dorgu persona list -n commerce
     dorgu persona status order-service -n commerce
     ```
 
-    The operator reconciles the persona asynchronously. Status fields tell you whether validation passed, what issues were found, and the current health of the application.
+    The operator reconciles each persona asynchronously. Phase `Active` means it resolved the persona to its Deployment; `Pending` means it did not, and the `Ready` condition says why. See [troubleshooting](/operator/features/self-healing#troubleshooting).
   </Step>
 </Steps>
+
+You can also write a persona by hand. The [CLI quickstart](/cli/quickstart#3-deploy-an-app-that-will-break) does exactly that for its demo app, and the [CRD reference](/cli/architecture/crds) lists every field.
+
+<Note>
+  CLI `v0.13.0` removed `persona generate` and `persona apply`, which built a persona from local source. See the [CLI migration guide](https://github.com/dorgu-ai/dorgu/blob/master/MIGRATION.md).
+</Note>
 
 ## Status fields
 
@@ -99,56 +89,22 @@ When a persona is applied, the Dorgu Operator runs continuous validation against
   The operator **never writes** to workload resources (Deployments, Services, etc.). It only reads cluster state and updates the `ApplicationPersona` status fields. This is a core architectural invariant.
 </Note>
 
-## Persona apply flow
-
-The following diagram shows what happens when you run `dorgu persona apply`:
-
-```mermaid
-sequenceDiagram
-    participant Dev as Developer
-    participant CLI as Dorgu CLI
-    participant Kubectl as kubectl
-    participant K8s as Kubernetes
-    participant Op as Operator
-    Dev->>CLI: dorgu persona apply ./my-app -n commerce
-    CLI->>CLI: Load global config
-    CLI->>CLI: Load app .dorgu.yaml
-    CLI->>CLI: Analyze application
-    CLI->>CLI: Generate persona YAML
-    CLI->>Kubectl: kubectl apply -f - -n commerce
-    Kubectl->>K8s: Create/Update ApplicationPersona
-    K8s->>Kubectl: Success
-    Kubectl->>CLI: Exit 0
-    CLI->>Dev: ApplicationPersona applied successfully
-    Note over Op,K8s: Async reconciliation
-    Op->>K8s: Watch detects new persona
-    Op->>Op: Reconcile
-```
-
 ## ClusterPersona
 
-A **ClusterPersona** is a cluster-scoped CRD (as opposed to the namespace-scoped `ApplicationPersona`). It represents the identity of the entire cluster — what nodes are available, what add-ons are installed, and the total resource capacity.
+A **ClusterPersona** is a cluster-scoped CRD, as opposed to the namespace-scoped `ApplicationPersona`. It represents the identity of the entire cluster: the nodes, the installed add-ons, the total resource capacity, and the cluster's self-healing policy.
 
-Create a ClusterPersona with:
-
-```bash
-dorgu cluster init
-```
-
-This discovers:
-
-- **Nodes** — count, instance types, capacity
-- **Add-ons** — ingress controllers, cert-manager, monitoring stack, service mesh
-- **Resource capacity** — total allocatable CPU and memory across the cluster
-
-The ClusterPersona is used during persona generation to make smarter defaults — for example, if the cluster has an NGINX ingress controller, generated Ingress resources use the correct `ingressClassName`.
-
-## Real-time monitoring
-
-Use `dorgu watch personas` to stream live updates for all personas in a namespace:
+You do not create it. The operator creates one named `dorgu-cluster` on startup and keeps its discovered fields current. Read it with:
 
 ```bash
-dorgu watch personas -n commerce
+dorgu cluster status
 ```
 
-This opens a WebSocket connection to the Dorgu Operator and displays real-time status changes — phase transitions, validation results, and health updates — as they happen.
+See [cluster discovery](/operator/features/cluster-discovery) for what is discovered, and the [self-healing trust model](/operator/features/self-healing#trust-model) for the policy fields you can change.
+
+## Following changes
+
+To follow persona changes as they happen, watch the CRD directly:
+
+```bash
+kubectl get applicationpersonas -n commerce -w
+```
