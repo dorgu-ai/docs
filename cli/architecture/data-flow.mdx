@@ -3,67 +3,68 @@ title: "Data Flow"
 description: "Sequence diagrams for key operational scenarios"
 ---
 
-Dorgu's architecture involves multiple components working together: the CLI analyzes and generates, the Operator validates and observes, and integrations like ArgoCD and Prometheus feed additional context. This page walks through the key data flows with sequence diagrams.
+Dorgu has two halves. The Operator runs in your cluster: it observes, validates, detects, diagnoses, and proposes, and it writes only its own CRDs. The CLI runs as you: it reads what the Operator recorded, renders it for review, records your decision, and applies an approved change to the workload with your credentials. Integrations like ArgoCD and Prometheus feed the Operator additional context. This page walks through the key data flows with sequence diagrams.
 
-## Application Onboarding
+## Onboarding an application
 
-The most common flow starts when a developer onboards an application. The CLI analyzes the source, generates Kubernetes manifests and a persona, and the developer commits them to Git. From there, GitOps takes over.
+Dorgu only watches workloads that have an `ApplicationPersona`. On a cluster that already runs the app, `dorgu persona import` reads the live Deployment and synthesizes one.
 
 ```mermaid
 sequenceDiagram
-    participant Dev as Developer
+    participant Dev as You
     participant CLI as Dorgu CLI
-    participant Git as Git/ArgoCD
-    participant K8s as Kubernetes
+    participant K8s as Kubernetes API
     participant Op as Dorgu Operator
-    Dev->>CLI: dorgu generate ./my-app
-    CLI->>CLI: Analyze Dockerfile/Compose/Code
-    CLI->>CLI: Optional LLM enhancement
-    CLI->>CLI: Generate manifests + persona.yaml
-    CLI->>Dev: Output files to ./k8s/
-    Dev->>Git: Commit and push
-    Git->>K8s: ArgoCD syncs manifests
-    K8s->>K8s: Create Deployment, Service, etc.
-    K8s->>K8s: Create ApplicationPersona CR
-    Op->>K8s: Watch ApplicationPersona
-    Op->>K8s: Find matching Deployment
-    Op->>Op: Validate against persona spec
+    Dev->>CLI: dorgu persona import -n apps --all
+    CLI->>K8s: kubectl get deployments -n apps
+    K8s->>CLI: Deployment specs
+    CLI->>CLI: Synthesize personas, warn on anything inferred
+    CLI->>Dev: Persona YAML on stdout, warnings on stderr
+    Dev->>K8s: kubectl apply -f personas.yaml (or --apply)
+    Op->>K8s: Watch detects new persona
+    Op->>K8s: Resolve persona to its Deployment
     Op->>K8s: Update persona status
 ```
 
-The developer runs `dorgu generate`, commits the output, and ArgoCD syncs it to the cluster. The Operator then picks up the new ApplicationPersona and begins validating the associated workload.
+Import never modifies a workload. The personas can equally be committed to Git and synced by your GitOps tool; the Operator does not care how they arrive.
 
-## Deployment Validation (Webhook)
+## Detect, propose, approve, heal
 
-The Operator runs a validating admission webhook that intercepts Deployment changes before they are persisted. Depending on the configured mode, the webhook either warns or blocks non-compliant changes.
+This is the self-healing loop end to end. The Operator never writes the Deployment; the CLI does, as you, after you approve.
 
 ```mermaid
 sequenceDiagram
-    participant User as User/ArgoCD
-    participant API as K8s API Server
-    participant Webhook as Dorgu Webhook
-    participant Persona as ApplicationPersona
-    User->>API: kubectl apply deployment.yaml
-    API->>Webhook: Admission request
-    Webhook->>Persona: Find matching persona
-    Webhook->>Webhook: Validate resources, replicas, security
-    alt Advisory Mode
-        Webhook->>API: Allow with warnings
-    else Enforcing Mode
-        alt Validation Passed
-            Webhook->>API: Allow
-        else Validation Failed
-            Webhook->>API: Deny with errors
-        end
+    participant Op as Dorgu Operator
+    participant K8s as Kubernetes API
+    participant Dev as You
+    participant CLI as Dorgu CLI
+    Op->>K8s: Read pods, nodes, events (every health-check interval)
+    Op->>Op: Detect signal, diagnose root cause
+    Op->>K8s: Create IncidentMemory
+    Op->>Op: Plan fix, run guardrails
+    Op->>K8s: Create RemediationAction (phase Pending)
+    Dev->>CLI: dorgu remediation diff <name>
+    CLI->>K8s: Read RemediationAction
+    CLI->>Dev: Plan, guardrail verdicts, persona and workload diff
+    Dev->>CLI: dorgu remediation approve <name>
+    CLI->>CLI: Preflight: protected context, ownership, target Deployment
+    CLI->>K8s: Patch RemediationAction status to Approved
+    Op->>K8s: Patch ApplicationPersona spec
+    CLI->>K8s: Patch Deployment with your credentials
+    CLI->>K8s: Record WorkloadPatched on the RemediationAction
+    Op->>K8s: After the verification window, re-check health
+    alt Healthy
+        Op->>K8s: Phase Completed, incident resolved
+    else Degraded
+        Op->>K8s: Restore persona, phase RolledBack
     end
-    API->>User: Response
 ```
 
-In **advisory mode**, the webhook allows all changes but attaches warnings when a deployment diverges from its persona. In **enforcing mode**, non-compliant changes are denied outright.
+On a workload that Helm, ArgoCD, or Flux owns, the preflight stops the CLI before any write and it exits `4` with the owner-shaped steps instead. See [the ownership model](/ownership-model) and [`dorgu remediation`](/cli/commands/remediation).
 
 ## Async Validation (Controller)
 
-Beyond the webhook, the ApplicationPersona controller runs a continuous reconciliation loop. It re-validates every 60 seconds and optionally learns resource baselines from Prometheus.
+The ApplicationPersona controller runs a continuous reconciliation loop. It re-validates every 60 seconds and optionally learns resource baselines from Prometheus.
 
 ```mermaid
 sequenceDiagram
@@ -95,31 +96,6 @@ sequenceDiagram
 ```
 
 The controller reconciles on watch events and on a 60-second timer. If Prometheus is available, it queries resource usage to build learned baselines over time.
-
-## Real-time CLI Communication
-
-The CLI can connect to the Operator via WebSocket for live updates. This enables commands like `dorgu watch personas` to stream status changes in real time.
-
-```mermaid
-sequenceDiagram
-    participant CLI as Dorgu CLI
-    participant WS as WebSocket Server
-    participant Op as Operator Controllers
-    participant K8s as Kubernetes
-    CLI->>WS: Connect to ws://operator:9090/ws
-    CLI->>WS: Subscribe to "personas" topic
-    WS->>CLI: Subscription confirmed
-    Note over Op,K8s: Persona changes
-    Op->>K8s: Update ApplicationPersona status
-    Op->>WS: Broadcast PersonaEvent
-    WS->>CLI: Push event to subscriber
-    CLI->>CLI: Display update to user
-    CLI->>WS: Request: ListPersonas
-    WS->>K8s: List ApplicationPersonas
-    WS->>CLI: Response: PersonaSummary[]
-```
-
-The WebSocket interface supports two patterns: **subscribe** for push-based event streaming, and **request/response** for on-demand queries. Both run over a single persistent connection.
 
 ## ArgoCD Integration
 
@@ -197,34 +173,6 @@ sequenceDiagram
 
 The ClusterPersona controller discovers nodes, resource capacity, installed add-ons (ArgoCD, Prometheus, Grafana), Kubernetes version, platform type, and the total count of managed ApplicationPersonas.
 
-## Persona Apply Flow
-
-The `dorgu persona apply` command is the primary way to create or update an ApplicationPersona in a cluster directly from the CLI.
-
-```mermaid
-sequenceDiagram
-    participant Dev as Developer
-    participant CLI as Dorgu CLI
-    participant Kubectl as kubectl
-    participant K8s as Kubernetes
-    participant Op as Operator
-    Dev->>CLI: dorgu persona apply ./my-app -n commerce
-    CLI->>CLI: Load global config
-    CLI->>CLI: Load app .dorgu.yaml
-    CLI->>CLI: Analyze application
-    CLI->>CLI: Generate persona YAML
-    CLI->>Kubectl: kubectl apply -f - -n commerce
-    Kubectl->>K8s: Create/Update ApplicationPersona
-    K8s->>Kubectl: Success
-    Kubectl->>CLI: Exit 0
-    CLI->>Dev: ApplicationPersona applied successfully
-    Note over Op,K8s: Async reconciliation
-    Op->>K8s: Watch detects new persona
-    Op->>Op: Reconcile
-```
-
-The CLI loads configuration, analyzes the application, generates the persona YAML, and applies it via `kubectl`. The Operator then picks it up asynchronously through its watch and begins reconciliation.
-
 ## Persona Status Check
 
 Checking the status of an ApplicationPersona retrieves the Operator's latest observations, including validation results, health status, and any recommendations.
@@ -252,37 +200,30 @@ The following diagram shows how the major layers connect end-to-end.
 
 ```mermaid
 flowchart TB
-    subgraph Input ["Input Layer"]
-        App["Application Source"]
-        Config["Configuration"]
-    end
-    subgraph CLILayer ["CLI Layer"]
-        Analyze["Analysis"]
-        Generate["Generation"]
-        Apply["Apply/Status"]
-    end
     subgraph ClusterLayer ["Cluster Layer"]
-        CRDs["Persona CRDs"]
-        Workloads["Deployments"]
+        Workloads["Deployments and Pods"]
         IntegrationsLayer["ArgoCD/Prometheus"]
+        CRDs["Dorgu CRDs"]
     end
     subgraph OperatorLayer ["Operator Layer"]
-        Controllers["Controllers"]
-        Webhook["Webhook"]
-        WebSocket["WebSocket"]
+        Controllers["Persona controllers"]
+        HealthCheck["Health-check reconciler"]
     end
-    App --> Analyze
-    Config --> Analyze
-    Analyze --> Generate
-    Generate --> Apply
-    Apply --> CRDs
-    CRDs --> Controllers
+    subgraph CLILayer ["CLI Layer (your credentials)"]
+        Review["health / incidents / remediation diff"]
+        Approve["approve / heal"]
+        Import["persona import"]
+    end
     Workloads --> Controllers
     IntegrationsLayer --> Controllers
+    Workloads --> HealthCheck
     Controllers --> CRDs
-    Workloads --> Webhook
-    CRDs --> Webhook
-    WebSocket --> Apply
+    HealthCheck --> CRDs
+    CRDs --> Review
+    Workloads --> Import
+    Import --> CRDs
+    Approve --> CRDs
+    Approve --> Workloads
 ```
 
-Data flows from application source and configuration through the CLI's analysis and generation pipeline, into the cluster as Persona CRDs and workload resources. The Operator layer continuously reconciles, validates, and feeds observations back into the CRDs, while the WebSocket server enables the CLI to receive live updates.
+The Operator reads workloads and integrations and writes only Dorgu's CRDs. The CLI reads those CRDs for review, writes your decisions back to them, and is the only part of Dorgu that changes a workload, with your credentials and after your approval.

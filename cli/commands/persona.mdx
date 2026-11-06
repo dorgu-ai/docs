@@ -1,20 +1,17 @@
 ---
 title: dorgu persona
-description: Manage ApplicationPersona CRDs — generate, apply, and monitor persona resources on your cluster
+description: Create ApplicationPersonas from running Deployments, and inspect them
 ---
 
 ## Overview
 
 The `dorgu persona` command group manages **ApplicationPersona** custom resources. An ApplicationPersona is a Kubernetes CRD that captures the operational identity of your application — its resource requirements, scaling behavior, health characteristics, and deployment preferences — as a declarative, version-controlled resource.
 
-There are two ways in, depending on where the app is.
+Dorgu only watches workloads that have a persona. You create them from the Deployments already running on your cluster with [`persona import`](#persona-import), then inspect them with [`persona list`](#persona-list) and [`persona status`](#persona-status).
 
-| Starting point | Command | What it reads |
-|----------------|---------|---------------|
-| Local source with a `Dockerfile` or `docker-compose.yml` | [`persona generate`](#persona-generate) / [`persona apply`](#persona-apply) | Your working tree |
-| A Deployment already running on the cluster | [`persona import`](#persona-import) | The live Deployment spec |
-
-For a greenfield app the workflow is: **generate** a persona YAML from your application source, **apply** it to the cluster, and **check status** to verify the operator has reconciled it. For a cluster that already has apps, **import** does it in one step from what is already running.
+<Note>
+  CLI `v0.13.0` removed `persona generate` and `persona apply`, which built a persona from local source. `persona import` reads the live Deployment instead and needs no source tree. See the [CLI migration guide](https://github.com/dorgu-ai/dorgu/blob/master/MIGRATION.md).
+</Note>
 
 ## persona import
 
@@ -30,7 +27,7 @@ dorgu persona import -n <namespace> [--all | --name <deployment>] [flags]
 
 Read the live Deployments in a namespace and synthesize an `ApplicationPersona` for each from what is already in the spec: resources, probes, replicas, ports, image, and ownership labels.
 
-This is the onboarding path for a cluster that already has apps. Unlike `persona generate`, it needs no local source, no Dockerfile, and no relabelling of your workloads. Dorgu only watches workloads that have a persona, so until one exists a broken app raises no incident and gets no proposed fix.
+This is how you onboard apps. It needs no local source, no Dockerfile, and no relabelling of your workloads. Dorgu only watches workloads that have a persona, so until one exists a broken app raises no incident and gets no proposed fix.
 
 It prints the YAML by default so you can read it before anything reaches the cluster. `--apply` creates the personas; `-o` writes them to a file.
 
@@ -96,7 +93,7 @@ Other things import reports rather than guesses at silently:
 | No HTTP liveness or readiness probe | The `health` block is left out of the persona, and the Deployment is named. Exec and TCP probes have no path to record. |
 | Another Deployment's label outranks this one's name | The conflict is named, with the label to set so the persona resolves to the workload you meant. |
 | No Deployments in the namespace | Nothing is written, and it says so rather than emitting an empty file. |
-| `ApplicationPersona` CRD not installed | Reported as a fact about the operator, with `dorgu cluster setup` as the hint. |
+| `ApplicationPersona` CRD not installed | Reported as a fact about the operator, with the `helm install` command for the operator as the hint. |
 
 ### How the persona is named
 
@@ -119,82 +116,6 @@ Phase `Active` means the operator resolved the persona to its Deployment. Phase 
 
 The full walkthrough, from install through breaking an imported app and healing it, is the [brownfield quickstart](/cli/quickstart#brownfield-a-cluster-that-already-has-apps).
 
-## persona generate
-
-### Synopsis
-
-```bash
-dorgu persona generate [path] [flags]
-```
-
-Analyze an application directory and produce an `ApplicationPersona` YAML manifest. The path should point to a directory containing a `Dockerfile` or `docker-compose.yml`. Defaults to `.` if omitted.
-
-### Flags
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `-n`, `--namespace` | string | `default` | Target Kubernetes namespace |
-| `-o`, `--output` | string | `.` | Output directory for `persona.yaml` |
-| `--dry-run` | bool | `false` | Print to stdout without writing files |
-| `--llm-provider` | string | — | LLM provider for analysis (`openai`, `anthropic`, `gemini`, `ollama`) |
-| `--name` | string | auto-detected | Override application name |
-
-### Examples
-
-```bash
-# Generate persona for the current directory
-dorgu persona generate
-
-# Generate from a specific app directory
-dorgu persona generate ./my-app
-
-# Preview without writing files
-dorgu persona generate . --dry-run
-
-# Custom output directory and namespace
-dorgu persona generate ./my-app -o ./manifests -n production
-
-# Use LLM-enhanced analysis
-dorgu persona generate . --llm-provider openai
-
-# Override the application name
-dorgu persona generate . --name order-service
-```
-
-## persona apply
-
-### Synopsis
-
-```bash
-dorgu persona apply [path] [flags]
-```
-
-Analyze an application and apply the resulting `ApplicationPersona` directly to the cluster. This combines the generate and `kubectl apply` steps into a single command. The path defaults to `.` if omitted.
-
-### Flags
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `-n`, `--namespace` | string | `default` | Target Kubernetes namespace |
-| `--llm-provider` | string | — | LLM provider for analysis (`openai`, `anthropic`, `gemini`, `ollama`) |
-| `--name` | string | auto-detected | Override application name |
-
-### Examples
-
-```bash
-# Analyze and apply persona for the current directory
-dorgu persona apply
-
-# Apply from a specific directory to a namespace
-dorgu persona apply ./my-app -n staging
-
-# Apply with LLM-enhanced analysis
-dorgu persona apply . --llm-provider anthropic
-
-# Apply with a custom name
-dorgu persona apply . --name payment-api -n commerce
-```
-
 ## persona list
 
 ### Synopsis
@@ -210,6 +131,7 @@ List the `ApplicationPersona` resources on the cluster with their phase, health,
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-n`, `--namespace` | string | all namespaces | Namespace to list |
+| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
 | `--json` | bool | `false` | Output the raw resource list as JSON (inherited global flag) |
 
 ### Example output
@@ -243,7 +165,7 @@ dorgu persona list -n commerce
 dorgu persona list --json
 ```
 
-With no personas, the command says so and points at `dorgu persona generate`. Use [`dorgu persona import`](#persona-import) instead when the apps are already running. If the CRD is missing entirely, it reports that the operator is not installed rather than reporting an empty list.
+With no personas, the command says so and points at [`dorgu persona import`](#persona-import). If the CRD is missing entirely, it reports that the operator is not installed rather than reporting an empty list.
 
 ## persona status
 
@@ -260,6 +182,7 @@ Check the reconciliation status of an `ApplicationPersona` by name. Requires exa
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-n`, `--namespace` | string | `default` | Kubernetes namespace to query |
+| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
 
 ### Examples
 

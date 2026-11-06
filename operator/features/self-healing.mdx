@@ -138,7 +138,7 @@ Every proposal starts from the **live workload**, not the persona.
 
 The `ApplicationPersona` is a point-in-time record, and on a brownfield cluster it drifts from the running Deployment. Dorgu used to compute sizes, state numbers, and diff as though the persona were authoritative, which is how it once quoted a 96Mi memory limit for a container that had been running with 32Mi for weeks. Since operator v0.9.0:
 
-- The operator reads the live Deployment at proposal time and records what it found on [`spec.workloadRef`](/ownership-model#specworkloadref): the workload's real name, the container, the observed image, and the observed `requests` and `limits`.
+- The operator reads the live Deployment at proposal time and records what it found on [`spec.workloadRef`](/cli/architecture/crds#workloadref-fields): the workload's real name, the container, the observed image, and the observed `requests` and `limits`.
 - **Every stated fact comes from the live container**, and names the Deployment and container it was read from. Where the workload is unreadable, Dorgu says so and warns that the persona figure may have drifted.
 - **The blast-radius cap is measured against the live value**, not against whichever of persona and live is larger. Capping against the larger one permitted a 192Mi proposal on a 32Mi container whenever the persona was the stale, bigger number.
 - **A remediation may only change a resource key the workload already sets.** `observedResources` distinguishes absent from zero, so approving a memory fix can no longer silently introduce a CPU limit the Deployment never had. The rule-based path refuses and says why; the AI path drops the offending patch leaf, records the omission in the step rationale, and demotes a step whose patch is emptied by the pruning.
@@ -194,10 +194,33 @@ Every proposal passes the safety checker before it is created.
 | Concurrency | **One active remediation per persona** — a second is skipped while one is `Approved`, `Applying`, or `Verifying` |
 | Failure cooldown | 30 minutes after a `Failed` remediation for the same persona |
 | Rejection cooldown | A rejected remediation suppresses re-proposal for the same incident and target for **1 hour**, or until the signal materially changes |
-| Namespace deny list | `kube-system` and `dorgu-operator-system` always; plus anything in `policies.selfHealing.excludeNamespaces` |
+| Namespace deny list | `kube-system` and the operator's own namespace always (`dorgu-system` with the documented install); plus anything in the chart's `safety.excludedNamespaces` or the ClusterPersona's `policies.selfHealing.excludeNamespaces`. See [protected namespaces](#protected-namespaces). |
 | Approval | **Required by default.** Every proposal is created with `approval.required: true` and phase `Pending`. |
 | Deduplication | One remediation per incident, and one per persona-plus-target — so an OOM that also trips a crash-loop yields **two incidents but one fix** |
 | Rollback | Automatic. The operator restores `prePatchState` when verification finds the health degraded. |
+
+### Protected namespaces
+
+Dorgu never proposes a remediation for a persona in a protected namespace. Incidents there are still detected and diagnosed; only the proposal is skipped, and the operator logs `safety check failed: [deny-list ...]` when it does.
+
+Two namespaces are always protected: `kube-system`, and the namespace the operator itself runs in. The operator reads its namespace from `POD_NAMESPACE`, which the chart sets from the downward API, so it protects wherever you installed it rather than a fixed name. Add more in either place:
+
+```bash
+# Chart value, new in 0.12.0
+helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  -n dorgu-system --reuse-values \
+  --set 'safety.excludedNamespaces={payments,ingress-nginx}'
+
+# Or on the ClusterPersona, alongside the rest of the self-healing policy
+kubectl patch clusterpersona dorgu-cluster --type merge \
+  -p '{"spec":{"policies":{"selfHealing":{"excludeNamespaces":["payments"]}}}}'
+```
+
+The chart value belongs to whoever installs the operator; the ClusterPersona field belongs to whoever manages cluster policy. Dorgu honours the union of both.
+
+<Note>
+  **Fixed in operator v0.12.0.** Older releases protected a hardcoded `dorgu-operator-system`, the kustomize default, so with the documented `--namespace dorgu-system` install Dorgu's own namespace was not protected. Upgrade if you run 0.11.x.
+</Note>
 
 ### Guardrail verdicts as data
 
@@ -249,7 +272,7 @@ The CLI prints all of this under its own heading, away from any sentence a model
 </Warning>
 
 <Note>
-  **Optional and additive.** `safety` is absent on every object written by an operator older than v0.11.0, and absent means no guardrail ruled. A CLI that does not know the field renders exactly as it did before, and no migration is needed. See [guardrail verdicts](/ownership-model#guardrail-verdicts-cli-v0120-with-operator-v0110).
+  **Optional and additive.** `safety` is absent on every object written by an operator older than v0.11.0, and absent means no guardrail ruled. A CLI that does not know the field renders exactly as it did before, and no migration is needed. See [guardrail verdicts](/ownership-model#version-coupling).
 </Note>
 
 <Note>
@@ -322,7 +345,7 @@ See the [trust model](/cli/architecture/trust-model) for how the levels are mean
 
 | Component | Required? | What you lose without it |
 |-----------|-----------|--------------------------|
-| `healthCheck.enabled` | **Yes**, and **`true` by default** since chart 0.8.0 | The whole loop. Set it to `false` to run validation and discovery only. |
+| `healthCheck.enabled` | **Yes**, and **`true` by default** since chart 0.8.0 | The whole loop. Set it to `false` to run validation and discovery only: from chart 0.12.0 the operator then never opens an incident or proposes a fix. |
 | An ApplicationPersona per app | **Yes** | Signals have nothing to correlate to, so no incident is opened. On a cluster that already has apps, create them with [`dorgu persona import`](/cli/commands/persona#persona-import). |
 | Resource **limits** on the persona | **Yes** for resource fixes | The proposer skips with `persona has no resource limits configured` |
 | A label on the Deployment | **No** | Nothing. Resolution walks a fallback chain (below) and pod-template-only labelling resolves fine. |
@@ -332,7 +355,6 @@ See the [trust model](/cli/architecture/trust-model) for how the levels are mean
 | metrics-server | No | Container-level CPU/memory usage and saturation signals. OOM and crash-loop detection still work. |
 | Prometheus | No | Learned resource baselines in `status.learned.resourceBaseline`, which the AI uses to size fixes |
 | Anthropic API key | No, and **off by default** | AI diagnosis and AI ordered plans. Rule-based detection, diagnosis, and remediation are the default path and heal on their own. [Why AI is off](/operator/configuration/ai-setup#why-it-is-off-and-what-that-costs-you). |
-| WebSocket | No | Live `dorgu watch remediations` streaming |
 
 ### How a persona finds its Deployment
 

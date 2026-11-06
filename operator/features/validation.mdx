@@ -140,9 +140,13 @@ Or query the resource directly:
 kubectl get applicationpersona my-app -n production -o jsonpath='{.status.validation}'
 ```
 
+<Note>
+  **Validation reports; it does not block.** Results land on the persona's status and nothing stops a Deployment from being created or updated. Operator `v0.12.0` removed the Deployment validating webhook, which was meant to check Deployments at admission time but never produced a warning or a denial in any release. See [Helm values](/operator/configuration/helm-values#removed-the-validating-webhook) if your values still set `webhook.*`.
+</Note>
+
 <CardGroup cols={2}>
-  <Card title="Webhook validation" icon="traffic-light" href="/operator/features/webhook">
-    Block non-compliant deployments at admission time
+  <Card title="Self-healing" icon="heart-pulse" href="/operator/features/self-healing">
+    Detection, diagnosis, and the fixes Dorgu proposes
   </Card>
   <Card title="CRD specification" icon="file-code" href="/cli/architecture/crds">
     Full ApplicationPersona and ClusterPersona schema

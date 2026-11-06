@@ -3,7 +3,7 @@ title: "Dorgu Operator"
 description: "Kubernetes operator for cluster-side validation, discovery, and persona lifecycle management"
 ---
 
-The Dorgu Operator is the AI SRE that runs inside your cluster. It detects incidents, diagnoses their root cause, and proposes reviewable fixes — and it also validates deployments against persona constraints, discovers cluster state, and streams real-time updates to the CLI. It is the cluster-side companion to the [Dorgu CLI](/cli/quickstart).
+The Dorgu Operator is the AI SRE that runs inside your cluster. It detects incidents, diagnoses their root cause, and proposes reviewable fixes. It also validates deployments against persona constraints and discovers cluster state. It is the cluster-side companion to the [Dorgu CLI](/cli/quickstart).
 
 ## What the operator does
 
@@ -23,12 +23,6 @@ The Dorgu Operator is the AI SRE that runs inside your cluster. It detects incid
   <Card title="Prometheus baselines" icon="chart-line">
     Queries Prometheus for CPU and memory usage over a 1-hour window and stores baselines in `.status.learned.resourceBaseline`.
   </Card>
-  <Card title="Validating webhook" icon="traffic-light">
-    Optionally intercepts Deployment create/update operations. Runs in advisory (warn) or enforcing (deny) mode.
-  </Card>
-  <Card title="WebSocket server" icon="plug">
-    Enables real-time communication with the CLI for `dorgu watch` and `dorgu sync` commands via topic-based pub/sub.
-  </Card>
 </CardGroup>
 
 <Note>
@@ -39,15 +33,14 @@ The Dorgu Operator is the AI SRE that runs inside your cluster. It detects incid
 
 ```mermaid
 flowchart LR
-    CLI["Dorgu CLI"] -->|writes spec| CRD["Persona CRDs"]
-    CRD -->|reads spec| Op["Operator"]
-    Op -->|reads state| K8s["Cluster Resources"]
-    Op -->|writes status| CRD
-    Op -->|broadcasts events| WS["WebSocket"]
-    WS -->|live updates| CLI
+    Op["Operator"] -->|reads state| K8s["Cluster Resources"]
+    Op -->|writes incidents and proposals| CRD["Dorgu CRDs"]
+    CRD -->|reads proposals| CLI["Dorgu CLI"]
+    CLI -->|writes approval| CRD
+    CLI -->|patches with your credentials| K8s
 ```
 
-The CLI and GitOps pipelines own the `spec` fields of Persona CRDs (desired state). The operator owns the `status` fields (observed reality). This separation ensures a clean contract between what you declare and what the cluster reports.
+The operator observes and proposes; the CLI is how a person reads a proposal, approves or rejects it, and applies the workload change. You, `dorgu persona import`, or your GitOps pipeline own the `spec` fields of an `ApplicationPersona` (desired state), and the operator owns the `status` fields (observed reality). The one exception is an approved remediation, where the operator patches the persona's `spec` to the value you approved.
 
 ## Get started
 

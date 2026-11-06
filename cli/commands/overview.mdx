@@ -7,52 +7,33 @@ description: All Dorgu CLI commands at a glance
 
 ```
 dorgu
-├── generate [path]         Analyze app and generate K8s manifests
-├── init [path]             Initialize dorgu configuration
-├── config                  Manage configuration
-│   ├── list                List all config values
-│   ├── get <key>           Get a single config value
-│   ├── set <key> <value>   Set a config value
-│   ├── path                Show config file path
-│   └── reset               Reset to defaults
-├── persona                 Manage ApplicationPersona CRDs
-│   ├── generate [path]     Generate persona YAML from local source
-│   ├── apply [path]        Apply persona to cluster from local source
-│   ├── import              Create personas from Deployments already running
-│   ├── status <name>       Check persona status
-│   └── list                List personas across namespaces
-├── cluster                 Manage ClusterPersona CRDs
-│   ├── init                Create a ClusterPersona
-│   ├── status [name]       View cluster status
-│   ├── setup               Install production-ready stack
-│   └── info                Show access details for installed stack components
-├── watch                   Real-time streaming (WebSocket)
-│   ├── personas            Watch persona updates
-│   ├── cluster             Watch cluster updates
-│   ├── events              Watch validation events
-│   ├── incidents           Watch IncidentMemory updates
-│   └── remediations        Watch RemediationAction updates
-├── sync                    Query operator state
-│   ├── status              Show sync health
-│   └── pull                Pull latest persona data
 ├── health                  Show cluster health summary
-├── incidents               Manage and view cluster incidents
+├── incidents               View detected incidents
 │   ├── list                List incidents
 │   └── describe <name>     Show incident details
-├── remediation             Manage remediation proposals
+├── remediation             Review and act on proposed fixes
 │   ├── list                List remediation proposals
 │   ├── diff <name>         Show the proposed change
-│   ├── approve <name>      Approve a pending remediation
+│   ├── approve <name>      Approve a pending remediation and heal the workload
 │   ├── reject <name>       Reject a remediation proposal
 │   └── heal <name>         Apply an approved remediation to the workload
-├── platform                Platform management
-│   └── serve               Start web UI dashboard
-└── version                 Show version info
+├── persona                 ApplicationPersona CRDs
+│   ├── import              Create personas from Deployments already running
+│   ├── list                List personas across namespaces
+│   └── status <name>       Check persona status
+├── cluster                 ClusterPersona CRDs
+│   └── status [name]       View cluster status
+├── version                 Show version info
+└── completion              Generate a shell completion script
 ```
 
 <Note>
-  `dorgu incidents` has only `list` and `describe` — there is no `history` subcommand.
+  `dorgu incidents` has only `list` and `describe`. There is no `history` subcommand.
 </Note>
+
+<Info>
+  **CLI `v0.13.0` removed every command that was not part of the self-healing loop:** `generate`, `init`, `config`, `persona generate`, `persona apply`, `cluster init`, `cluster setup`, `cluster info`, `platform serve`, `watch`, `sync`, `health --watch`, and the global `--config` flag. The [CLI migration guide](https://github.com/dorgu-ai/dorgu/blob/master/MIGRATION.md) lists what to use instead for each one.
+</Info>
 
 ## Command reference
 
@@ -60,18 +41,13 @@ The command tree above is a plain listing. Use these links for the full flag ref
 
 | Command | Reference | What it does |
 |---------|-----------|--------------|
-| `dorgu generate` | [generate](/cli/commands/generate) | Analyze an app and generate Kubernetes manifests |
-| `dorgu init` | [init](/cli/commands/init) | Initialize app, workspace, or global configuration |
-| `dorgu config` | [config](/cli/commands/config) | Read and write configuration values |
-| `dorgu persona` | [persona](/cli/commands/persona) | Generate, import, apply, and inspect ApplicationPersona CRDs |
-| `dorgu cluster` | [cluster](/cli/commands/cluster) · [cluster setup](/cli/commands/cluster-setup) | Manage the ClusterPersona and bootstrap a cluster stack |
-| `dorgu watch` | [watch](/cli/commands/watch) | Stream personas, cluster, events, incidents, and remediations |
-| `dorgu sync` | [sync](/cli/commands/sync) | Query operator state |
 | `dorgu health` | [health](/cli/commands/health) | Cluster health summary |
 | `dorgu incidents` | [incidents](/cli/commands/incidents) | List and inspect detected incidents |
 | `dorgu remediation` | [remediation](/cli/commands/remediation) | Review, approve, reject, and apply proposed fixes |
-| `dorgu platform` | [platform](/cli/commands/platform) | Serve the v0 web dashboard. **Deprecated** |
+| `dorgu persona` | [persona](/cli/commands/persona) | Import and inspect ApplicationPersona CRDs |
+| `dorgu cluster` | [cluster](/cli/commands/cluster) | Inspect the ClusterPersona the operator maintains |
 | `dorgu version` | [version](/cli/commands/version) | Show version info |
+| `dorgu completion` | `dorgu completion --help` | Shell completion for bash, zsh, fish, and PowerShell |
 
 ## Global flags
 
@@ -79,17 +55,15 @@ These flags apply to all commands:
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--config` | Path to config file | `.dorgu.yaml` |
-| `--no-color` | Disable colored output | `false` |
+| `--context` | kube-context for every `kubectl` call the command makes | the kubeconfig's current-context |
 | `--json` | Output as JSON | `false` |
+| `--no-color` | Disable colored output | `false` |
 
-## Path argument
-
-Commands that accept a `[path]` argument default to the current directory (`.`) when omitted. The path should point to a directory containing a `Dockerfile` or `docker-compose.yml`.
+Cluster commands also take `--kubeconfig`. Both it and `--context` are applied to every `kubectl` call a command makes, so a command never reads one cluster and writes another. `heal`'s [production-context guard](/cli/commands/remediation#protected-contexts) checks the `--context` value when you set it, and the kubeconfig's current-context otherwise.
 
 ## Prerequisites
 
-Every command that touches a cluster shells out to **`kubectl`**, so it must be on your `PATH` and your current context must point at the target cluster. Without it those commands fail with `kubectl not found in PATH`. Only `generate`, `init`, and `config` work with no cluster at all.
+Every command that touches a cluster shells out to **`kubectl`**, so it must be on your `PATH`, and either your current context or `--context` must point at the target cluster. Without it those commands fail with `kubectl not found in PATH`. Only `version` and `completion` work with no cluster at all.
 
 Set `DORGU_DEBUG=1` to see `kubectl`'s raw output in error messages. By default the CLI strips klog noise (the `memcache.go:265 "Unhandled Error"` lines) so the message that says what went wrong is not buried.
 
@@ -116,7 +90,6 @@ Codes 2 and 3 are opt-in and specific to [`dorgu health`](/cli/commands/health#e
 dorgu --help
 
 # Command-specific help
-dorgu generate --help
-dorgu cluster setup --help
+dorgu remediation approve --help
 dorgu persona import --help
 ```

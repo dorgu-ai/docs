@@ -16,7 +16,7 @@ This is the fastest path to seeing Dorgu work: install it, deliberately deploy a
 </Info>
 
 <Warning>
-  Use a development cluster. `dorgu remediation heal` refuses to run if your kube-context name contains `prod`, but the safest habit is to try this somewhere disposable.
+  Use a development cluster. `dorgu remediation approve` and `heal` refuse to patch a workload through a kube-context whose name contains `prod` (configurable with [`DORGU_PROTECTED_CONTEXTS`](/cli/commands/remediation#protected-contexts)), but that is a name check, and the safest habit is to try this somewhere disposable.
 </Warning>
 
 ## 1. Install the CLI
@@ -48,7 +48,7 @@ kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=dorgu-operator 
 ```
 
 <Note>
-  **Failure detection is enabled by default** as of chart 0.8.0, so there is no flag to remember. To run the operator without it, install with `--set healthCheck.enabled=false`.
+  **Failure detection is enabled by default** as of chart 0.8.0, so there is no flag to remember. To run the operator without it, install with `--set healthCheck.enabled=false`. From chart 0.12.0 that means the operator records persona health only and never opens an incident or proposes a fix. Chart 0.11.x and older still opened OOM incidents and proposed fixes through an older code path even with detection off.
 </Note>
 
 The operator auto-creates a `ClusterPersona` named `dorgu-cluster` on startup and discovers your nodes, add-ons, and capacity:
@@ -355,18 +355,6 @@ Dorgu only watches workloads that have an `ApplicationPersona`. Without one, a b
   Which versions to be on, and what every other mismatch does: [versions](/cli/installation#versions).
 </Warning>
 
-## Also: generate manifests
-
-Manifest generation is Dorgu's other half. Point the CLI at any app with a `Dockerfile` or `docker-compose.yml`:
-
-```bash
-cd my-app
-dorgu init
-dorgu generate .
-```
-
-Dorgu analyzes the app and writes a Deployment, Service, Ingress, HPA, ArgoCD Application, a GitHub Actions workflow, and an ApplicationPersona — the same kind of persona the self-healing loop above operates on. Use `--dry-run` to print instead of write, and `--llm-provider openai` (or `anthropic`, `gemini`, `ollama`) for LLM-enhanced analysis. See the [manifest generation guide](/cli/guides/manifest-generation).
-
 ## Next steps
 
 <CardGroup cols={2}>
@@ -380,7 +368,7 @@ Dorgu analyzes the app and writes a Deployment, Service, Ingress, HPA, ArgoCD Ap
     Key handling, verification, and how to turn AI off
   </Card>
   <Card title="Working with personas" icon="id-card" href="/cli/guides/working-with-personas">
-    Write, generate, or import the personas the loop depends on
+    Import and inspect the personas the loop depends on
   </Card>
   <Card title="dorgu persona import" icon="download" href="/cli/commands/persona#persona-import">
     Onboard a cluster that already has apps running

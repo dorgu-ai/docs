@@ -16,7 +16,7 @@ Approving does two things: it records your decision on the `RemediationAction`, 
 </Warning>
 
 <Note>
-  All subcommands shell out to `kubectl`, so `kubectl` must be on your `PATH` and your current context must point at the target cluster. The alias `dorgu rem` works everywhere `dorgu remediation` does.
+  All subcommands shell out to `kubectl`, so `kubectl` must be on your `PATH`, and your current context, or the global `--context` flag, must point at the target cluster. Every `kubectl` call a command makes uses the same `--kubeconfig` and `--context`, so a command never reads one cluster and writes another. The alias `dorgu rem` works everywhere `dorgu remediation` does.
 </Note>
 
 ## Exit codes
@@ -409,7 +409,7 @@ Approves a `Pending` remediation and, when Dorgu owns the write, heals the workl
 
 <Steps>
   <Step title="The CLI preflights the workload change">
-    Before anything is written: the kube-context guard, the remediation plan, **the ownership check**, the target Deployment, the container, and the patch. If any of it fails, nothing is approved. On an **owned** workload this is where the command stops: it prints the refusal and exits `4`, having written neither a Deployment patch nor a status patch.
+    Before anything is written: the [protected-context guard](#protected-contexts), the remediation plan, **the ownership check**, the target Deployment, the container, and the patch. If any of it fails, nothing is approved. On an **owned** workload this is where the command stops: it prints the refusal and exits `4`, having written neither a Deployment patch nor a status patch.
   </Step>
   <Step title="The CLI records your decision">
     It patches the RemediationAction status subresource to `phase: Approved`, with `approvedBy: cli-user` and the current timestamp.
@@ -685,8 +685,35 @@ This is the same class as the field-manager footprint warning, with one delibera
 | Phase `Rejected`, `Failed`, `Expired`, `RolledBack` | Refused. |
 | Phase `Approved`, `Applying`, `Verifying`, `Completed` | Proceeds — this is the expected path. |
 | Phase `Pending` or unset | Warns that healing directly is an implicit approval, then proceeds. |
-| Production-looking context | Refused if the current kube-context name contains `prod`. |
+| Protected context | Refused if the kube-context name contains any pattern in `DORGU_PROTECTED_CONTEXTS` (default `prod`). See [protected contexts](#protected-contexts). |
 | Confirmation | Prints the namespace, Deployment, container, and the exact field changes, then prompts `[y/N]` unless `--yes` is set. It also states the limit of the `unmanaged` classification: nothing Dorgu can see reconciles this Deployment, and [a kustomize overlay leaves no marker](/ownership-model#the-kustomize-limitation), so re-applying one would revert the change. |
+
+### Protected contexts
+
+Before `approve` writes an approval, and before `heal` patches a workload, the CLI checks the name of the kube-context it is about to write through and refuses if the name contains a protected pattern. An approval is refused with or without `--no-heal`, because approving is itself a change: it tells the operator to update the persona. The context it checks is the global `--context` value when you pass one, and the kubeconfig's current-context otherwise, so the name it checks is always the context the patch goes to.
+
+The patterns come from `DORGU_PROTECTED_CONTEXTS`: comma-separated, case-insensitive substrings. The default is `prod`. An unset or blank value falls back to `prod` rather than turning the guard off, because an empty variable is far more often an accident than a decision to heal production.
+
+```bash
+# Default: any context whose name contains "prod" is refused
+dorgu remediation approve fix-oom-api-server -n production
+
+# Protect two patterns instead of the default
+export DORGU_PROTECTED_CONTEXTS=production,live
+
+# Point one command at a specific context; this is the name the guard checks
+dorgu remediation heal fix-oom-api-server -n staging --context kind-dorgu-dev
+```
+
+A refusal exits `1` and names the context and the pattern it matched:
+
+```
+refusing to heal: kube-context "eks-prod-eu" matches protected pattern "prod" (DORGU_PROTECTED_CONTEXTS); switch to a non-production context
+```
+
+<Warning>
+  **This is a name check and nothing more.** It is a seatbelt against healing the wrong cluster by accident, not a security boundary: a context with a different name passes it. `aws eks update-kubeconfig` names contexts after the cluster ARN, so an EKS cluster whose name contains `prod` is refused under the default. Narrow the patterns if that is not what you want.
+</Warning>
 
 <Note>
   The ownership gate runs before the plan is resolved against the cluster, and an **advisory-only** plan never reaches it: there is no workload change to refuse, so an advisory remediation behaves identically on owned and unmanaged workloads.

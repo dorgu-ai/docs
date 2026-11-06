@@ -1,0 +1,64 @@
+---
+title: "Changelog"
+description: "What changed in each Dorgu release, and what you need to do about it"
+---
+
+{/* CLI v0.13.0 and operator/chart 0.12.0 are unreleased until the P0 releases are cut. Set the dates when the tags exist. */}
+
+This page covers the releases that change how you use Dorgu. The full history, release by release, is in each repository's changelog: [CLI](https://github.com/dorgu-ai/dorgu/blob/master/CHANGELOG.md) and [operator](https://github.com/dorgu-ai/dorgu-operator/blob/master/CHANGELOG.md).
+
+<Update label="CLI v0.13.0 · operator v0.12.0" description="Dorgu is the self-healing loop and nothing else">
+  Both halves drop every surface that was not part of detect, diagnose, propose, approve, heal. Both releases are breaking if you used one of the removed surfaces, so read the upgrade steps before you upgrade.
+
+  ## Upgrade steps
+
+  - **If you used `dorgu generate`, `init`, `config`, `persona generate|apply`, `cluster setup|info|init`, `platform serve`, `watch` or `sync`,** read the [CLI migration guide](https://github.com/dorgu-ai/dorgu/blob/master/MIGRATION.md). It lists what to use instead for each one. The last commit with them is tagged `pre-harness`.
+  - **If your Helm values set `webhook.enabled=true`,** remove it before upgrading the chart. The install fails with a message saying the webhook was removed, rather than silently dropping the value.
+  - **If you run the operator binary directly with a `--webhook-*` or `--enable-webhook` flag,** remove the flag. The binary no longer starts with it.
+
+  ## CLI v0.13.0
+
+  **Removed**
+
+  - `generate`, `init`, `config`, `persona generate`, `persona apply`, `cluster init`, `cluster setup`, `cluster info`, `platform serve`, `watch`, `sync`, `health --watch`, `health --operator-url`, and the global `--config` flag. `.dorgu.yaml` and `~/.config/dorgu/config.yaml` are no longer read.
+  - The CLI's own LLM integration (OpenAI, Anthropic, Gemini, Ollama). The CLI now makes no calls to a model provider and reads no API key. AI diagnosis and AI plans come from the operator, in your cluster, only when you [enable them](/operator/configuration/ai-setup).
+
+  **Added**
+
+  - A global [`--context`](/cli/commands/overview#global-flags) flag, applied to every `kubectl` call. `persona status`, `persona list` and `cluster status` gain `--kubeconfig`, and every command now honours both on every call it makes. The production-context guard on `approve` and `heal` checks the `--context` value when you set one.
+  - [`DORGU_PROTECTED_CONTEXTS`](/cli/commands/remediation#protected-contexts): comma-separated, case-insensitive substrings of kube-context names that `approve` and `heal` refuse to patch a workload through. The default stays `prod`, and a blank value falls back to it.
+
+  **Changed**
+
+  - "Operator not installed" hints now print the `helm install` command for the operator instead of the removed `dorgu cluster setup`.
+
+  **Fixed**
+
+  - A `kubectl` flag value equal to a verb name, as in `kubectl -n logs delete deployment/foo`, no longer makes a write look read-only. On a workload Dorgu does not own, a step command is printed only if it reads, and the verb is now found by position rather than by scanning for the first word that looks like one.
+  - `kubectl auth reconcile` and `kubectl rollout -n status restart` are no longer classified as read-only. `auth` and `rollout` are judged by the subcommand that immediately follows them.
+  - [Protected contexts](/cli/commands/remediation#protected-contexts) now refuse every `approve`, including `--no-heal`. Approving is itself a change, and the refusal used to suggest `--no-heal` as the way through.
+
+  ## Operator v0.12.0 and Helm chart 0.12.0
+
+  **Removed**
+
+  - The Deployment validating admission webhook, with its `webhook.*` chart values, Service, `ValidatingWebhookConfiguration`, and `--enable-webhook` and `--webhook-*` flags. It never produced a warning or a denial in any release. Persona validation still runs and reports on the persona's status. See [Helm values](/operator/configuration/helm-values#removed-the-validating-webhook).
+  - An older code path that opened `OOMKilled` incidents and proposed fixes even with detection turned off.
+
+  **Changed**
+
+  - **`healthCheck.enabled=false` now means what it says.** The operator records persona health only, and never opens an incident or proposes a fix.
+  - **`--enable-health-check` defaults to `true` in the binary,** matching the chart, which has defaulted `healthCheck.enabled` to `true` since 0.8.0.
+  - **The remediation deny-list protects the namespace Dorgu runs in.** It used to protect a hardcoded `dorgu-operator-system`, so the documented `dorgu-system` install was not covered. The operator now reads its namespace from `POD_NAMESPACE`, which the chart sets. `kube-system` stays protected.
+
+  **Added**
+
+  - [`safety.excludedNamespaces`](/operator/configuration/helm-values#remediation-safety) (flag `--safety-excluded-namespaces`): more namespaces Dorgu never proposes a remediation in. The ClusterPersona's `excludeNamespaces` still applies alongside it.
+  - The chart creates a metrics Service and a `metrics-reader` ClusterRole, and exports `dorgu_incidents_total`, `dorgu_proposals_total` and `dorgu_remediation_transitions_total`. See [Metrics and probes](/operator/configuration/helm-values#metrics-and-probes).
+
+  **Fixed**
+
+  - Gemini: the API key is sent in a request header rather than in the URL, and the chart injects the environment variable that matches the chosen `llm.provider`. See [Using Gemini](/operator/configuration/ai-setup#using-gemini).
+  - Scraping `/metrics` on a Helm install no longer fails with a 500. With secure metrics on, the chart now grants the operator what it needs to authenticate scrapers.
+  - A protected namespace is refused before the AI planner is asked for a plan, so incidents there no longer cost a model call or send that namespace's details to the provider.
+</Update>

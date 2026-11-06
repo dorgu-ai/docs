@@ -68,7 +68,7 @@ flowchart LR
     The AI SRE: detects incidents, diagnoses root cause, and proposes reviewable fixes with guardrails.
   </Card>
   <Card title="Dorgu CLI" icon="terminal" href="/cli/quickstart">
-    Review and approve remediations, inspect cluster health, and generate K8s manifests and personas.
+    Review and approve remediations, inspect cluster health, and import personas for the apps you already run.
   </Card>
 </CardGroup>
 
@@ -78,13 +78,12 @@ flowchart LR
 - **Respects your deployment tool**: Dorgu detects who owns each workload and refuses to patch a Helm, ArgoCD, or Flux-managed Deployment. It tells you what to change in your source of truth instead, so your next `helm upgrade` still works. And where it does patch, it removes its own field-manager entry afterwards, so it leaves no ownership footprint for your next apply to fight
 - **Grounded in the live workload**: every number Dorgu states, and every cap it computes, is read from the running container rather than from a stale record
 - **Ordered, reviewable fixes** — a plan with per-step diffs, rationale, and risk levels, not an opaque action
-- **Real guardrails**: a 2× blast-radius cap measured against the live value, no resource keys added that the workload does not set, rate limits, one remediation per incident, `kube-system` deny-listed, automatic rollback on regression
+- **Real guardrails**: a 2× blast-radius cap measured against the live value, no resource keys added that the workload does not set, rate limits, one remediation per incident, `kube-system` and Dorgu's own namespace deny-listed, automatic rollback on regression
 - **A published permission model**: the operator's ClusterRole in full, with the denied verbs called out, so "it never writes workloads" is checkable rather than asserted
 - **Kubernetes-native memory** — `IncidentMemory` and `RemediationAction` CRDs, so the record lives in your cluster, not a vendor's database
 - **BYO key, and AI off by default**: Anthropic only, operator-side. The deterministic path is the default and the current recommendation, and it heals on its own. [Why](/operator/configuration/ai-setup#why-it-is-off-and-what-that-costs-you)
 - **ApplicationPersona CRDs** — living identity documents for your apps, and the desired-state record a fix is applied to
-- **Manifest generation** — analyze a Dockerfile, docker-compose file, or source tree and produce Deployment, Service, Ingress, HPA, ArgoCD Application, and CI/CD workflow
-- **Cluster bootstrapping** — an interactive wizard installs cert-manager, ingress-nginx, CloudNativePG, OpenObserve, Argo CD, and External Secrets
+- **Brownfield onboarding**: `dorgu persona import` creates personas from the Deployments already running, with no source tree and no relabelling
 
 ## Next steps
 
@@ -104,7 +103,7 @@ flowchart LR
   <Card title="Installation" icon="download" href="/cli/installation">
     Install the Dorgu CLI via Go, binary release, or from source
   </Card>
-  <Card title="Manifest generation" icon="file-code" href="/cli/guides/manifest-generation">
-    Generate Kubernetes manifests from your app
+  <Card title="Onboard a cluster" icon="download" href="/cli/guides/cluster-onboarding">
+    Bring the apps you already run under Dorgu's watch
   </Card>
 </CardGroup>

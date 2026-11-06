@@ -1,114 +1,97 @@
 ---
 title: "System Architecture"
-description: "High-level architecture of the Dorgu system"
+description: "How the Dorgu CLI and operator split the self-healing loop between them"
 ---
 
 # System Architecture
 
-Dorgu is a two-component system: a **CLI** that analyzes applications and generates Kubernetes manifests, and an **Operator** that validates deployments and manages cluster state. They communicate through Kubernetes CRDs and a WebSocket connection.
+Dorgu is a two-component system. The **Operator** runs in your cluster: it detects incidents, diagnoses their root cause, and proposes a fix as a `RemediationAction`. The **CLI** runs as you: it is how you read a proposal, approve or reject it, and apply the approved change to the running workload. The two never talk to each other directly. They communicate only through Kubernetes CRDs.
 
 ## System Diagram
 
 ```mermaid
 flowchart TB
-    subgraph CLI ["Dorgu CLI"]
-        Generate["dorgu generate"]
-        PersonaGen["dorgu persona generate"]
-        PersonaApply["dorgu persona apply"]
-        PersonaStatus["dorgu persona status"]
-        ClusterInit["dorgu cluster init"]
-        Watch["dorgu watch"]
-        Sync["dorgu sync"]
+    subgraph CLI ["Dorgu CLI (your kubeconfig)"]
+        Health["dorgu health"]
+        Incidents["dorgu incidents"]
+        Remediation["dorgu remediation list / diff"]
+        Approve["dorgu remediation approve / heal"]
+        Import["dorgu persona import"]
     end
 
     subgraph Cluster ["Kubernetes Cluster"]
-        subgraph CRDs ["Custom Resources"]
-            AppPersona["ApplicationPersona CRD"]
-            ClusterPersonaCR["ClusterPersona CRD"]
+        subgraph CRDs ["Dorgu CRDs"]
+            AppPersona["ApplicationPersona"]
+            ClusterPersonaCR["ClusterPersona"]
+            Incident["IncidentMemory"]
+            RA["RemediationAction"]
         end
 
-        subgraph Operator ["Dorgu Operator"]
-            AppController["ApplicationPersona Controller"]
-            ClusterController["ClusterPersona Controller"]
-            ArgoCDWatcher["ArgoCD Watcher"]
-            WebhookVal["Validating Webhook"]
-            WSServer["WebSocket Server"]
-            PromClient["Prometheus Client"]
+        subgraph Operator ["Dorgu Operator (read-only on workloads)"]
+            Controllers["Persona controllers"]
+            HealthCheck["Health-check reconciler"]
         end
 
-        subgraph Workloads
-            Deployments["Deployments"]
-            Services["Services"]
-        end
-
-        subgraph Integrations
-            ArgoCD["ArgoCD"]
-            Prometheus["Prometheus"]
-        end
+        Deployments["Deployments"]
     end
 
-    Generate --> Manifests["K8s Manifests"]
-    PersonaGen --> AppPersona
-    PersonaApply --> AppPersona
-    PersonaStatus --> AppPersona
-    ClusterInit --> ClusterPersonaCR
-    Watch --> WSServer
-    Sync --> WSServer
+    Controllers --> AppPersona
+    Controllers --> ClusterPersonaCR
+    HealthCheck --> Incident
+    HealthCheck --> RA
+    Deployments -.->|read| Controllers
+    Deployments -.->|read| HealthCheck
 
-    AppController --> AppPersona
-    AppController --> Deployments
-    AppController --> PromClient
-    ClusterController --> ClusterPersonaCR
-    ArgoCDWatcher --> ArgoCD
-    ArgoCDWatcher --> AppPersona
-    WebhookVal --> Deployments
-    PromClient --> Prometheus
+    Health --> Incident
+    Incidents --> Incident
+    Remediation --> RA
+    Approve -->|approval| RA
+    Approve -->|patch, your credentials| Deployments
+    Import -.->|read| Deployments
+    Import --> AppPersona
 ```
 
 ## Component Overview
 
 | Component | Repository | Description |
 |-----------|------------|-------------|
-| Dorgu CLI | `dorgu-ai/dorgu` | CLI for manifest generation, persona management, cluster interaction |
-| Dorgu Operator | `dorgu-ai/dorgu-operator` | K8s operator for deployment validation, cluster discovery, persona management |
-| ApplicationPersona CRD | `dorgu.io/v1` | App identity, requirements, and operational context (namespaced) |
-| ClusterPersona CRD | `dorgu.io/v1` | Cluster identity and state (cluster-scoped singleton) |
+| Dorgu CLI | `dorgu-ai/dorgu` | Review and approval surface for the self-healing loop; brownfield persona import |
+| Dorgu Operator | `dorgu-ai/dorgu-operator` | Detection, diagnosis, proposals, verification, persona validation, cluster discovery |
+| CRDs | `dorgu.io/v1` | `ApplicationPersona`, `ClusterPersona`, `IncidentMemory`, `RemediationAction`, `DorguEvent`. See the [CRD reference](/cli/architecture/crds). |
+
+## What the CLI does
+
+Every cluster command shells out to `kubectl` with your kubeconfig, through one helper that applies `--kubeconfig` and the global `--context` to every call. The CLI has no configuration file and makes no calls to a model provider.
+
+| Command | Reads | Writes |
+|---------|-------|--------|
+| `health`, `incidents`, `remediation list`, `remediation diff`, `persona list`, `persona status`, `cluster status` | Dorgu CRDs and cluster state | Nothing |
+| `persona import` | Deployments in one namespace | Nothing by default; `ApplicationPersona` objects with `--apply` |
+| `remediation reject` | The `RemediationAction` | Its status, to `Rejected` |
+| `remediation approve`, `remediation heal` | The `RemediationAction`, its persona, the target Deployment | The `RemediationAction` status, then the Deployment, with your credentials |
+
+`approve` and `heal` run their checks before any write: the [protected-context guard](/cli/commands/remediation#protected-contexts), the plan, [workload ownership](/ownership-model), the target Deployment, and the container. If any check fails, nothing is written. Only resource limit and request changes are applied automatically; every other step in a plan is printed as a manual instruction and never executed. After the patch, the CLI records what it changed on the `RemediationAction`, so the record and the cluster agree.
+
+The CLI does not verify the outcome or roll it back. The Operator does both.
 
 ## Design Principles
 
 ### Don't replace, integrate
 
-Dorgu generates standard Kubernetes, ArgoCD, and GitHub Actions manifests that work with your existing tooling. It does not introduce a proprietary deployment format or require you to change your workflow. The generated YAML is plain, readable, and fully customizable.
+Dorgu works with the deployment tooling you already have. It does not introduce a deployment format, and it will not patch a Deployment that Helm, ArgoCD, or Flux owns: it tells you what to change in your source of truth instead. See [the ownership model](/ownership-model).
 
-### Operator is read-only
+### Operator is read-only on workloads
 
-The operator **NEVER** creates or modifies workload resources (Deployments, Services). It only reads cluster state, validates deployments against persona expectations, and updates Persona CRD status fields. This means Dorgu cannot accidentally break your running applications.
+The operator **never** creates or modifies workload resources (Deployments, Services). It reads cluster state and writes only Dorgu's own CRDs. Kubernetes RBAC enforces this: its ClusterRole has no write verb on `apps/deployments`. See [security and permissions](/security-and-permissions).
+
+### The workload change is made by you
+
+The only Dorgu component that writes a workload is the CLI, running with your credentials, after you approve. The privilege to change a workload never leaves your hands. See [the trust model](/cli/architecture/trust-model).
 
 ### Source-of-truth hierarchy
 
-The CLI and GitOps pipelines own the `spec` fields of Persona CRDs, representing **desired intent**. The Operator owns the `status` fields, representing **observed reality** and learned patterns. This separation ensures a clean contract between what you declare and what the cluster reports.
-
-## Repository Structure
-
-The CLI follows a standard Go project layout:
-
-```
-dorgu/
-├── cmd/dorgu/main.go
-├── internal/
-│   ├── analyzer/      # Dockerfile, Compose, Code analysis
-│   ├── cli/           # Cobra commands
-│   ├── config/        # Config loading and merging
-│   ├── generator/     # Manifest generators + validation
-│   ├── llm/           # LLM provider interface + implementations
-│   ├── output/        # File writer and terminal formatter
-│   ├── setup/         # Cluster setup wizard
-│   ├── types/         # Shared AppAnalysis type
-│   └── ws/            # WebSocket client
-├── testdata/          # Test fixtures
-└── testapps/          # Sample applications
-```
+You, `dorgu persona import`, or your GitOps pipeline own the `spec` of an `ApplicationPersona`, representing **desired intent**. The Operator owns the `status`, representing **observed reality** and learned patterns. The one exception is an approved remediation, where the Operator patches the persona's `spec` to the value you approved.
 
 <Info>
-All business logic lives under `internal/` to enforce Go's package boundary. The `cmd/dorgu/main.go` entry point is intentionally thin -- it only wires together the CLI commands.
+  CLI `v0.13.0` removed the manifest generator, the cluster setup installer, and the WebSocket clients, along with the CLI's own LLM integration. See the [CLI migration guide](https://github.com/dorgu-ai/dorgu/blob/master/MIGRATION.md).
 </Info>

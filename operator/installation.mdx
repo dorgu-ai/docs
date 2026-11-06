@@ -49,6 +49,8 @@ helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-o
   --set healthCheck.enabled=false
 ```
 
+From chart 0.12.0, off means off: the operator records each persona's health and never opens an incident or proposes a fix. On chart 0.11.x and older, an older code path still opened `OOMKilled` incidents and wrote `RemediationAction` proposals with detection off, so upgrade if you depend on this.
+
 ### Pin a chart version
 
 The command above resolves the newest published chart. To pin an exact version for reproducibility, add `--version`:
@@ -57,11 +59,11 @@ The command above resolves the newest published chart. To pin an exact version f
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
   --namespace dorgu-system \
   --create-namespace \
-  --version 0.11.1
+  --version 0.12.0
 ```
 
 <Note>
-  The chart version and the operator version are the same number, so `--version 0.11.1` installs operator `v0.11.1`. If the literal above has fallen behind, [Versions](#versions) is the statement to trust on this page, and [operator releases](https://github.com/dorgu-ai/dorgu-operator/releases) is the statement to trust over both.
+  The chart version and the operator version are the same number, so `--version 0.12.0` installs operator `v0.12.0`. If the literal above has fallen behind, [Versions](#versions) is the statement to trust on this page, and [operator releases](https://github.com/dorgu-ai/dorgu-operator/releases) is the statement to trust over both.
 </Note>
 
 ### Install with a values file
@@ -69,10 +71,6 @@ helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-o
 To customize the installation, create a `values.yaml` file:
 
 ```yaml
-webhook:
-  enabled: true
-  mode: advisory
-
 argocd:
   enabled: true
 
@@ -80,8 +78,9 @@ prometheus:
   enabled: true
   url: "http://prometheus-server.monitoring:9090"
 
-websocket:
-  enabled: true
+safety:
+  excludedNamespaces:
+    - payments
 ```
 
 Then install with your values:
@@ -108,7 +107,7 @@ cd dorgu-operator
 make install
 
 # Deploy the operator
-make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.11.1
+make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.12.0
 ```
 
 To reverse it:
@@ -140,7 +139,7 @@ make build
 Running locally connects to whatever cluster your `kubeconfig` points to. Make sure you are targeting the correct cluster before starting the operator.
 </Warning>
 
-Running the manager directly does not read the chart's defaults. Add `--enable-health-check` to get the detection loop that a Helm install gives you.
+Running the manager directly does not read the chart's values, but from `v0.12.0` its own defaults match the chart's: `--enable-health-check` defaults to `true` in the binary as well. On older binaries it defaulted to `false`, so pass `--enable-health-check` there to get the detection loop a Helm install gives you. The binary reads its own namespace from `POD_NAMESPACE`, then from the mounted service account. Outside a pod neither exists, so set `POD_NAMESPACE` yourself if you want the [deny-list](/operator/configuration/helm-values#remediation-safety) to protect the namespace you installed into.
 
 ## Build and push Docker image
 
@@ -228,7 +227,7 @@ Look for `Phase 2a/2b health check and remediation enabled` with the interval. I
 helm uninstall dorgu-operator -n dorgu-system
 ```
 
-That removes everything Helm actually owns: the operator Deployment, the ServiceAccount, the `dorgu-operator-manager` ClusterRole and ClusterRoleBinding, and the webhook and WebSocket Services and `ValidatingWebhookConfiguration` where you enabled them. The operator stops within seconds and nothing further is detected, diagnosed, or proposed.
+That removes everything Helm actually owns: the operator Deployment, the ServiceAccount, the `dorgu-operator-manager` ClusterRole and ClusterRoleBinding, and the WebSocket Service where you enabled it. The operator stops within seconds and nothing further is detected, diagnosed, or proposed.
 
 ### 2. Know what is still there
 
@@ -321,7 +320,7 @@ kubectl delete clusterpersonas --all
   <Card title="Quickstart" icon="rocket" href="/operator/quickstart">
     Apply your first persona and see the operator in action
   </Card>
-  <Card title="Already have apps running?" icon="download" href="/operator/quickstart#brownfield-a-cluster-that-already-has-apps">
+  <Card title="Already have apps running?" icon="download" href="/operator/quickstart#step-3b-brownfield-a-cluster-that-already-has-apps">
     Import personas from your live Deployments
   </Card>
   <Card title="Turn on AI" icon="sparkles" href="/operator/configuration/ai-setup">

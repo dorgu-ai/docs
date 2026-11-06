@@ -3,7 +3,7 @@ title: "Configuration Overview"
 description: "All operator configuration options: command-line flags and feature toggles"
 ---
 
-The operator is configured through command-line flags, which map directly to Helm values when deploying via Helm. All features are opt-in except the core reconciliation controllers.
+The operator is configured through command-line flags, which map directly to Helm values when deploying via Helm. The core controllers and the self-healing loop are on by default; AI and the optional integrations are opt-in.
 
 ## Feature matrix
 
@@ -11,15 +11,14 @@ The operator is configured through command-line flags, which map directly to Hel
 |---------|---------|------|-------------|
 | ApplicationPersona controller | Enabled | Always on | Validates deployments against persona constraints |
 | ClusterPersona controller | Enabled | Always on | Discovers cluster state and resource capacity |
-| Self-healing loop | Disabled | `--enable-health-check` | Detection, diagnosis, and remediation proposals |
+| Self-healing loop | Enabled | `--enable-health-check` | Detection, diagnosis, and remediation proposals |
 | AI diagnosis | Disabled | `--llm-provider` | LLM-enhanced root-cause analysis (requires an API key) |
 | AI remediation planner | Enabled *when* a provider and key are set | `--enable-ai-remediation` | Ordered, AI-written remediation plans (Anthropic only) |
 | Metrics-server integration | Enabled | `--enable-metrics-server` | Container-level CPU/memory signals |
 | ClusterPersona bootstrap | Enabled | `--auto-create-cluster-persona` | Auto-creates `dorgu-cluster` on startup |
 | ArgoCD watcher | Enabled | `--enable-argocd` | Watches ArgoCD Applications for sync status |
-| Validating webhook | Disabled | `--enable-webhook` | Intercepts Deployment create/update |
 | Prometheus integration | Disabled | `--prometheus-url` | Queries Prometheus for resource baselines |
-| WebSocket server | Disabled | `--enable-websocket` | Real-time CLI communication |
+| WebSocket server | Disabled | `--enable-websocket` | Optional event stream; no CLI command uses it since CLI `v0.13.0` |
 | Leader election | Disabled (flag default; enabled in Helm chart) | `--leader-elect` | HA mode for multi-replica deployments |
 | Secure metrics | Enabled | `--metrics-secure` | HTTPS metrics endpoint with RBAC |
 
@@ -32,17 +31,11 @@ The operator is configured through command-line flags, which map directly to Hel
 | `--metrics-bind-address` | string | `0` | Metrics endpoint bind address. Use `:8443` for HTTPS or `:8080` for HTTP. Set to `0` to disable. |
 | `--health-probe-bind-address` | string | `:8081` | Health and readiness probe bind address |
 | `--leader-elect` | bool | `false` | Enable leader election for HA deployments |
-| `--enable-http2` | bool | `false` | Enable HTTP/2 for metrics and webhook servers |
+| `--enable-http2` | bool | `false` | Enable HTTP/2 for the metrics server |
 
-### Webhook
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--enable-webhook` | bool | `false` | Enable the validating admission webhook |
-| `--webhook-mode` | string | `advisory` | `advisory` (warn only) or `enforcing` (reject on errors) |
-| `--webhook-cert-path` | string | `""` | Directory containing webhook TLS certificate |
-| `--webhook-cert-name` | string | `tls.crt` | Webhook certificate filename |
-| `--webhook-cert-key` | string | `tls.key` | Webhook private key filename |
+<Warning>
+  **Operator `v0.12.0` removed the Deployment validating webhook** and its flags: `--enable-webhook`, `--webhook-mode`, `--webhook-cert-path`, `--webhook-cert-name` and `--webhook-cert-key`. Passing one stops the binary from starting, so remove them from any manifest that runs the manager directly. See [Helm values](/operator/configuration/helm-values#removed-the-validating-webhook) for the chart side.
+</Warning>
 
 ### Metrics
 
@@ -57,16 +50,17 @@ The operator is configured through command-line flags, which map directly to Hel
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--enable-health-check` | bool | `false` | Enable the health-check reconciler — detection, diagnosis, and remediation |
+| `--enable-health-check` | bool | `true` | Enable the health-check reconciler: detection, diagnosis, and remediation proposals. When `false`, the operator records persona health only and never opens an incident or proposes a fix. Defaulted to `false` in the binary before `v0.12.0`. |
 | `--health-check-interval` | duration | `60s` | Detection cycle interval |
 | `--enable-metrics-server` | bool | `true` | Enable metrics-server integration for container-level detection |
 | `--llm-provider` | string | `""` | `claude` or `gemini` for AI-enhanced diagnosis. Empty disables AI. |
 | `--llm-api-key` | string | `""` | API key, overriding the `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` env vars |
 | `--llm-model` | string | `""` | Model override for the provider |
+| `--safety-excluded-namespaces` | string | `""` | Comma-separated namespaces Dorgu never proposes a remediation in, on top of `kube-system` and its own namespace (read from `POD_NAMESPACE`). See [remediation safety](/operator/configuration/helm-values#remediation-safety). |
 | `--enable-ai-remediation` | bool | `true` | Enable AI-written ordered remediation plans. Requires `--llm-provider=claude` and a key; falls back to the deterministic rules otherwise. |
 
 <Info>
-The Helm chart never passes `--llm-api-key`. It injects the key as the `ANTHROPIC_API_KEY` environment variable from a Secret via `secretKeyRef`, so it stays out of the pod spec. See [AI setup](/operator/configuration/ai-setup).
+The Helm chart never passes `--llm-api-key`. It injects the key as an environment variable from a Secret via `secretKeyRef` (`ANTHROPIC_API_KEY` for `claude`), so it stays out of the pod spec. See [AI setup](/operator/configuration/ai-setup).
 </Info>
 
 ### Bootstrap
@@ -82,7 +76,7 @@ The Helm chart never passes `--llm-api-key`. It injects the key as the `ANTHROPI
 |------|------|---------|-------------|
 | `--enable-argocd` | bool | `true` | Enable ArgoCD Application watching |
 | `--prometheus-url` | string | `""` | Prometheus server URL for baseline learning |
-| `--enable-websocket` | bool | `false` | Enable WebSocket server for CLI |
+| `--enable-websocket` | bool | `false` | Enable the [WebSocket server](/operator/features/websocket) |
 | `--websocket-addr` | string | `:9090` | WebSocket server listen address |
 
 <Info>
@@ -96,16 +90,13 @@ The ArgoCD watcher only activates if both `--enable-argocd=true` **and** the Arg
   --metrics-bind-address :8443 \
   --health-probe-bind-address :8081 \
   --leader-elect \
-  --enable-webhook \
-  --webhook-mode enforcing \
   --enable-health-check \
   --health-check-interval 30s \
   --llm-provider claude \
   --enable-ai-remediation \
   --enable-argocd \
   --prometheus-url http://prometheus-server.monitoring:9090 \
-  --enable-websocket \
-  --websocket-addr :9090
+  --safety-excluded-namespaces payments,ingress-nginx
 ```
 
 <CardGroup cols={2}>
