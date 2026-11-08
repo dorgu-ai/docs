@@ -3,11 +3,25 @@ title: "Changelog"
 description: "What changed in each Dorgu release, and what you need to do about it"
 ---
 
-{/* CLI v0.13.0 and operator/chart 0.12.0 are unreleased until the P0 releases are cut. Set the dates when the tags exist. */}
-
 This page covers the releases that change how you use Dorgu. The full history, release by release, is in each repository's changelog: [CLI](https://github.com/dorgu-ai/dorgu/blob/master/CHANGELOG.md) and [operator](https://github.com/dorgu-ai/dorgu-operator/blob/master/CHANGELOG.md).
 
-<Update label="CLI v0.13.0 · operator v0.12.0" description="Dorgu is the self-healing loop and nothing else">
+<Update label="Operator v0.12.1" description="2026-11-07: protected namespaces are kept out of every model call">
+  A patch release for operator and chart `0.12.1`. No values, flags or RBAC change, and there are no upgrade steps beyond `helm upgrade`.
+
+  **Fixed**
+
+  - **Incidents in a protected namespace are no longer sent to a model, by the diagnosis call or by the planner.** In 0.12.0 the deny-list stopped the AI planner for a protected persona, but the AI diagnosis call still sent the incident's summary, severity and signal strings (for example `Pod/dorgu-system/<name>`) to your provider every cycle, and recorded the incident as `provider: ai-enhanced`. The planner also had a gap: a node-pressure or eviction diagnosis can name pods from many namespaces under one persona, so a diagnosis for an allowed persona could still mention a protected pod.
+  - Now a diagnosis that touches any protected namespace is withheld from the model whole. The incident is still detected, diagnosed by the rules, and recorded, as `provider: rule-based`. Where the planner is withheld, Dorgu falls back to the rule-based proposal, which never calls a model. Namespaces that are not protected behave as before.
+  - The planner prompt no longer lists the ClusterPersona `excludeNamespaces`, so the names of namespaces meant to be invisible to the model are no longer sent with each plan request.
+
+  **Changed**
+
+  - **The deny-list fails closed.** If the ClusterPersona deny-list cannot be read, or a resource carries no namespace, the diagnosis is withheld from the model and no AI plan is proposed until the read recovers. The read error is logged at error level. Remediations already in flight are not affected.
+
+  Upgrade with `helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator --version 0.12.1 -n dorgu-system`. The CLI is unchanged: v0.13.0 is still the current release.
+</Update>
+
+<Update label="CLI v0.13.0 · operator v0.12.0" description="2026-11-06: Dorgu is the self-healing loop and nothing else">
   Both halves drop every surface that was not part of detect, diagnose, propose, approve, heal. Both releases are breaking if you used one of the removed surfaces, so read the upgrade steps before you upgrade.
 
   ## Upgrade steps
@@ -60,5 +74,5 @@ This page covers the releases that change how you use Dorgu. The full history, r
 
   - Gemini: the API key is sent in a request header rather than in the URL, and the chart injects the environment variable that matches the chosen `llm.provider`. See [Using Gemini](/operator/configuration/ai-setup#using-gemini).
   - Scraping `/metrics` on a Helm install no longer fails with a 500. With secure metrics on, the chart now grants the operator what it needs to authenticate scrapers.
-  - A protected namespace is refused before the AI planner is asked for a plan, so incidents there no longer cost a model call or send that namespace's details to the provider.
+  - A protected namespace is refused before the AI planner is asked for a plan. The diagnosis call was not covered yet; operator v0.12.1, above, closes that.
 </Update>
