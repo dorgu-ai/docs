@@ -222,6 +222,8 @@ The chart value belongs to whoever installs the operator; the ClusterPersona fie
   **Fixed in operator v0.12.0.** Older releases protected a hardcoded `dorgu-operator-system`, the kustomize default, so with the documented `--namespace dorgu-system` install Dorgu's own namespace was not protected. Upgrade if you run 0.11.x.
 </Note>
 
+With AI on, a protected namespace is also kept out of the model. From operator v0.12.1, an incident that touches a protected namespace makes no AI diagnosis call and no AI planner call, and is recorded as `provider: rule-based`. On v0.12.0 the diagnosis call still sent the incident's summary and signal strings to your provider.
+
 ### Guardrail verdicts as data
 
 New in **operator v0.11.0**: when a guardrail rules on a field, what it decided is recorded as structured data on `spec.steps[].safety` rather than written into a sentence.

@@ -1,7 +1,5 @@
-{/* These versions (CLI v0.13.0, operator and chart 0.12.0) are unreleased until the P0 releases are cut. Do not merge or publish before both tags exist. */}
-
 <Note>
-  **Current versions: CLI `v0.13.0` with operator `v0.12.0`** (Helm chart `0.12.0`; the chart version, the chart `appVersion`, and the operator version are always the same number). Newest of each is always the right answer, and this note is the only place in these docs that states which that is.
+  **Current versions: CLI `v0.13.0` with operator `v0.12.1`** (Helm chart `0.12.1`; the chart version, the chart `appVersion`, and the operator version are always the same number). Newest of each is always the right answer, and this note is the only place in these docs that states which that is.
 
   **CLI `v0.13.0` removed the manifest generation and cluster setup commands** (`generate`, `init`, `config`, `persona generate|apply`, `cluster setup|info|init`, `platform serve`, `watch`, `sync`), so if you relied on one, read the [CLI migration guide](https://github.com/dorgu-ai/dorgu/blob/master/MIGRATION.md) before upgrading.
 
@@ -20,6 +18,8 @@
   One operator upgrade is worth doing on its own merits, with no CLI implication at all: **with `aiRemediation.enabled=true`, operator `v0.11.0` is the release that made AI-planned remediations appliable.** On `v0.10.0` and older, a plan that diagnosed a resource change could be persisted with nothing to apply. See [AI setup](/operator/configuration/ai-setup).
 
   Operator `v0.12.0` is worth upgrading to on its own as well: it protects the namespace Dorgu is installed in from remediation, and it makes `healthCheck.enabled=false` mean no incidents and no proposals. It also removed the validating webhook, so **an upgrade that still sets `webhook.enabled=true` fails** until you drop the value. See [Helm values](/operator/configuration/helm-values#removed-the-validating-webhook).
+
+  Operator `v0.12.1` is the one to install if you turn on AI: it keeps incidents in protected namespaces, including the namespace Dorgu runs in, out of every model call. On `v0.12.0` the diagnosis call still sent them. No values, flags or RBAC change.
 
   Both mismatch directions in full, with the ownership reasoning behind them: [version coupling](/ownership-model#version-coupling). Newest published releases: [CLI](https://github.com/dorgu-ai/dorgu/releases) and [operator](https://github.com/dorgu-ai/dorgu-operator/releases).
 </Note>
