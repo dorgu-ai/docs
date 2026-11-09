@@ -12,7 +12,7 @@ The dorgu operator is a Kubernetes operator built with [controller-runtime](http
 | **Read-only workloads** | The operator NEVER writes to workload resources (Deployments, Services). It writes only its own CRDs. |
 | **Fail-open** | If the operator is down or encounters errors, workloads are unaffected. It registers no admission webhook, so nothing in the request path of your Deployments depends on it. |
 | **Opt-in features** | The core controllers and the self-healing loop are on by default. AI, Prometheus, and the event pipeline require explicit opt-in. |
-| **No ArgoCD dependency** | ArgoCD integration uses the unstructured API — no compile-time dependency on ArgoCD types. |
+| **No ArgoCD dependency** | ArgoCD integration uses the unstructured API, so there is no compile-time dependency on ArgoCD types. |
 | **Graceful degradation** | Missing integrations (no Prometheus, no ArgoCD) are silently skipped without affecting core functionality. |
 
 ## Project structure

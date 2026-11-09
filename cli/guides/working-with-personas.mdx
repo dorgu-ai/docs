@@ -7,11 +7,11 @@ description: Import ApplicationPersonas from running Deployments, and monitor th
 
 An **ApplicationPersona** is a Kubernetes Custom Resource that represents the identity and requirements of an application. It captures:
 
-- **Resource constraints** — CPU and memory requests/limits
-- **Scaling parameters** — min/max replicas, HPA thresholds
-- **Health probes** — liveness, readiness, and startup checks
-- **Security policies** — security contexts, pod security standards
-- **Ownership info** — team, repository, contact details
+- **Resource constraints**: CPU and memory requests/limits
+- **Scaling parameters**: min/max replicas, HPA thresholds
+- **Health probes**: liveness, readiness, and startup checks
+- **Security policies**: security contexts, pod security standards
+- **Ownership info**: team, repository, contact details
 
 Think of it as a living record of your application. Once it is on the cluster, the Dorgu Operator continuously validates the persona against actual cluster state, and the self-healing loop correlates every failure signal to it. **A workload without a persona is not watched**: it raises no incident and gets no proposed fix.
 
@@ -80,10 +80,10 @@ The `persona status` command reports the following fields from the `ApplicationP
 
 When a persona is applied, the Dorgu Operator runs continuous validation against the workload it describes. The operator checks:
 
-- **Resource limits** — CPU and memory requests/limits are set and within acceptable bounds
-- **Replica counts** — actual replicas match the declared scaling parameters
-- **Health probes** — liveness and readiness probes are configured and endpoints are reachable
-- **Security contexts** — containers run as non-root, drop capabilities, use read-only root filesystems
+- **Resource limits**: CPU and memory requests/limits are set and within acceptable bounds
+- **Replica counts**: actual replicas match the declared scaling parameters
+- **Health probes**: liveness and readiness probes are configured and endpoints are reachable
+- **Security contexts**: containers run as non-root, drop capabilities, use read-only root filesystems
 
 <Note>
   The operator **never writes** to workload resources (Deployments, Services, etc.). It only reads cluster state and updates the `ApplicationPersona` status fields. This is a core architectural invariant.

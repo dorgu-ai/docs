@@ -5,7 +5,7 @@ description: Review, approve, and apply the fixes Dorgu proposes for detected in
 
 ## Overview
 
-The `dorgu remediation` command group is how you work with `RemediationAction` resources — the fixes the Dorgu Operator proposes after it detects and diagnoses an incident. You list them, read the proposed plan as a diff, then approve or reject.
+The `dorgu remediation` command group is how you work with `RemediationAction` resources. These are the fixes the Dorgu Operator proposes after it detects and diagnoses an incident. You list them, read the proposed plan as a diff, then approve or reject.
 
 Approving does two things: it records your decision on the `RemediationAction`, and where Dorgu is allowed to, it heals the running workload. The operator re-checks the approval on the live cluster and issues a short-lived **apply ticket**. It applies the ticket to the `ApplicationPersona` (desired state), and the CLI patches the `Deployment` with your credentials, using exactly what the ticket says. See [How Dorgu decides](/how-dorgu-decides) for the path and [Self-healing](/operator/features/self-healing) for the loop.
 
@@ -75,7 +75,7 @@ flowchart LR
 Two condition reasons are worth knowing, both on the `Applied` condition. `AdvisoryOnly` accompanies `Acknowledged`. `PreconditionRejected` marks a plan the executor refused before touching the cluster, and `GateRefusedAtApproval` marks one the gate refused when you approved it. Neither starts the 30-minute failure cooldown, since nothing in the cluster actually went wrong.
 
 <Warning>
-  `Completed` only arrives **after the verification window** — 10 minutes by default (`spec.rollback.healthCheckAfter`). Your pod recovers within seconds of `approve`, but the remediation sits in `Applying` and then `Verifying` for the rest of that window. This is not stuck. It is the operator waiting long enough to be able to tell a real fix from a temporary one, so it can auto-roll-back if the health regresses.
+  `Completed` only arrives **after the verification window**. The window is 10 minutes by default (`spec.rollback.healthCheckAfter`). Your pod recovers within seconds of `approve`, but the remediation sits in `Applying` and then `Verifying` for the rest of that window. This is not stuck. It is the operator waiting long enough to be able to tell a real fix from a temporary one, so it can auto-roll-back if the health regresses.
 </Warning>
 
 ---
@@ -144,7 +144,7 @@ Ranked by how much a reader needs to know: `rejected` (a field refused outright)
 Requires **operator v0.11.0** with **CLI v0.12.0**. Against an older operator the underlying `spec.steps[].safety` field is absent, the column never appears, and `--json` gains no `safety` key.
 
 <Note>
-  **There is no severity here.** `RemediationAction` carries no `severity` field, so this command cannot filter or sort by it — the blank `SEVERITY` column and the `--severity` flag that matched nothing were both removed. Filter by `--phase`, and read severity from the linked incident with [`dorgu incidents describe`](/cli/commands/incidents), where `--severity` does work.
+  **There is no severity here.** `RemediationAction` carries no `severity` field, so this command cannot filter or sort by it. The blank `SEVERITY` column and the `--severity` flag that matched nothing were both removed. Filter by `--phase`, and read severity from the linked incident with [`dorgu incidents describe`](/cli/commands/incidents), where `--severity` does work.
 </Note>
 
 ### Examples
@@ -396,7 +396,7 @@ Approving one anyway is safe: it records the approval, changes nothing, and sett
 | mode | `auto` or `advisory` | `auto` means the step is applied for you; `advisory` means it is printed for a human to act on |
 
 <Note>
-  Only `persona-update` steps can ever be `auto`. The Kubernetes API server enforces this with a CEL validation rule on the CRD, so no plan — AI-written or otherwise — can mark a workload change as auto-executable.
+  Only `persona-update` steps can ever be `auto`. The Kubernetes API server enforces this with a CEL validation rule on the CRD, so no plan, whether AI-written or not, can mark a workload change as auto-executable.
 </Note>
 
 Older `RemediationAction` objects that carry a single `spec.action` instead of an ordered plan render a single `Proposed change:` diff rather than a `Plan (n steps):` block.
@@ -525,7 +525,7 @@ Read [the ownership model](/ownership-model) for how ownership is detected and w
 `--heal` and `--no-heal` are mutually exclusive.
 
 <Note>
-  `--next` takes the **oldest** pending remediation, so the longest-waiting incident goes first; ties break on namespace and name, making the pick reproducible. It previously ranked by severity, which `RemediationAction` does not carry — every candidate tied, so the winner was effectively arbitrary.
+  `--next` takes the **oldest** pending remediation, so the longest-waiting incident goes first; ties break on namespace and name, making the pick reproducible. It previously ranked by severity, which `RemediationAction` does not carry. Every candidate tied, so the winner was effectively arbitrary.
 </Note>
 
 <Warning>
@@ -548,7 +548,7 @@ Read [the ownership model](/ownership-model) for how ownership is detected and w
 dorgu remediation diff fix-oom-api-server -n production
 dorgu remediation approve fix-oom-api-server -n production
 
-# Non-interactive — used in the demo flow
+# Non-interactive, as used in the demo flow
 dorgu remediation approve fix-oom-api-server -n production --yes
 
 # Record the approval but apply the workload change yourself:
@@ -797,7 +797,7 @@ dorgu remediation heal fix-oom-api-server -n production --yes
 ```
 
 <Warning>
-  `heal` only auto-applies **resource limits and requests** (`cpu`, `memory`) — the OOM and saturation path. A remediation with no resource change reports that there is nothing to heal automatically and prints its advisory steps instead.
+  `heal` only auto-applies **resource limits and requests** (`cpu`, `memory`), which is the OOM and saturation path. A remediation with no resource change reports that there is nothing to heal automatically and prints its advisory steps instead.
 </Warning>
 
 ---

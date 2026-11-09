@@ -5,7 +5,7 @@ description: The open-source AI SRE for Kubernetes
 
 # Dorgu
 
-Dorgu is an open-source AI SRE for Kubernetes — built for teams that don't have a platform team. It runs on your own cluster, watches your apps, and when something breaks it doesn't just alert. It diagnoses the root cause, proposes a reviewable fix, and heals the workload with your approval.
+Dorgu is an open-source AI SRE for Kubernetes. It is built for teams that don't have a platform team. It runs on your own cluster, watches your apps, and when something breaks it doesn't just alert. It diagnoses the root cause, proposes a reviewable fix, and heals the workload with your approval.
 
 Code detects. AI explains. A human approves.
 
@@ -20,7 +20,7 @@ Code detects. AI explains. A human approves.
   allowFullScreen
 ></iframe>
 
-A 3-minute screencast recorded on a real EKS cluster: an app is deployed with too little memory, gets OOMKilled, and crash-loops. Dorgu detects it, Claude diagnoses the root cause and proposes an ordered fix, one command approves it, and the pod recovers. No audio — the terminal is the whole story.
+A 3-minute screencast recorded on a real EKS cluster: an app is deployed with too little memory, gets OOMKilled, and crash-loops. Dorgu detects it, Claude diagnoses the root cause and proposes an ordered fix, one command approves it, and the pod recovers. No audio. The terminal is the whole story.
 
 ## The self-healing loop
 
@@ -36,7 +36,7 @@ flowchart LR
 
 <Steps>
   <Step title="Detect">
-    The operator's health-check reconciler watches for OOMKills, crash loops, image-pull failures, long-pending pods, resource saturation, node pressure, and control-plane trouble — and opens an `IncidentMemory`.
+    The operator's health-check reconciler watches for OOMKills, crash loops, image-pull failures, long-pending pods, resource saturation, node pressure, and control-plane trouble. Each finding opens an `IncidentMemory`.
   </Step>
   <Step title="Diagnose">
     Deterministic rules produce a root cause and a confidence score. They are always on. With your own Anthropic key, Claude enhances the diagnosis with cluster context.
@@ -74,15 +74,15 @@ flowchart LR
 
 ## Key capabilities
 
-- **AI self-healing loop** — detect → diagnose → propose → approve → heal → remember, with human approval required by default
+- **AI self-healing loop**: detect → diagnose → propose → approve → heal → remember, with human approval required by default
 - **Respects your deployment tool**: Dorgu detects who owns each workload and refuses to patch a Helm, ArgoCD, or Flux-managed Deployment. It tells you what to change in your source of truth instead, so your next `helm upgrade` still works. And where it does patch, it removes its own field-manager entry afterwards, so it leaves no ownership footprint for your next apply to fight
 - **Grounded in the live workload**: every number Dorgu states, and every cap it computes, is read from the running container rather than from a stale record
-- **Ordered, reviewable fixes** — a plan with per-step diffs, rationale, and risk levels, not an opaque action
+- **Ordered, reviewable fixes**: a plan with per-step diffs, rationale, and risk levels, not an opaque action
 - **Real guardrails**: a 2× blast-radius cap measured against the live value, no resource keys added that the workload does not set, rate limits, one remediation per incident, `kube-system` and Dorgu's own namespace deny-listed, automatic rollback on regression
 - **A published permission model**: the operator's ClusterRole in full, with the denied verbs called out, so "it never writes workloads" is checkable rather than asserted
-- **Kubernetes-native memory** — `IncidentMemory` and `RemediationAction` CRDs, so the record lives in your cluster, not a vendor's database
+- **Kubernetes-native memory**: `IncidentMemory` and `RemediationAction` CRDs, so the record lives in your cluster, not a vendor's database
 - **BYO key, and AI off by default**: Anthropic only, operator-side. The deterministic path is the default and the current recommendation, and it heals on its own. [Why](/operator/configuration/ai-setup#why-it-is-off-and-what-that-costs-you)
-- **ApplicationPersona CRDs** — living identity documents for your apps, and the desired-state record a fix is applied to
+- **ApplicationPersona CRDs**: living identity documents for your apps, and the desired-state record a fix is applied to
 - **Brownfield onboarding**: `dorgu persona import` creates personas from the Deployments already running, with no source tree and no relabelling
 
 ## Next steps

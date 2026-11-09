@@ -3,7 +3,7 @@ title: "Trust Model"
 description: "Progressive trust levels for Kubernetes automation"
 ---
 
-Dorgu uses a progressive trust model that governs how much autonomy the system has over your cluster. Every action Dorgu takes maps to a specific trust level, and the system is designed so you can adopt it incrementally -- starting with zero-risk observation and gradually enabling more automation as confidence grows.
+Dorgu uses a progressive trust model that governs how much autonomy the system has over your cluster. Every action Dorgu takes maps to a specific trust level, and the system is designed so you can adopt it incrementally. You start with zero-risk observation and gradually enable more automation as confidence grows.
 
 ## Progressive Trust Levels
 
@@ -28,7 +28,7 @@ Dorgu implements **Levels 0 through 2**. Levels 3 through 5 are planned.
 
 **Operator (Level 0-2: OBSERVE / RECOMMEND / PROPOSE)**
 - Observes cluster state by watching Deployments, Pods, Nodes, and integration resources (ArgoCD, Prometheus)
-- Detects incidents, diagnoses root cause, and proposes an ordered fix as a `RemediationAction` — always in phase `Pending`, always requiring human approval
+- Detects incidents, diagnoses root cause, and proposes an ordered fix as a `RemediationAction`. It is always in phase `Pending` and always requires human approval
 - Validates running workloads against their ApplicationPersona constraints
 - Recommends improvements by writing suggestions to the persona's `status.recommendations` field
 - Re-checks an approval against the live cluster, issues a short-lived apply ticket, applies the ticket to the ApplicationPersona spec, then verifies the outcome and rolls the persona back automatically if health regresses
@@ -47,7 +47,7 @@ The healing loop is what Level 2 looks like end to end:
     `dorgu remediation diff` shows the whole proposal. You approve or reject.
   </Step>
   <Step title="Approval splits by authority">
-    The operator, with its own service account, patches the ApplicationPersona spec — the desired-state record. The CLI, with **your** credentials, patches the Deployment. The privilege to change a workload never leaves your hands.
+    The operator, with its own service account, patches the ApplicationPersona spec, which is the desired-state record. The CLI, with **your** credentials, patches the Deployment. The privilege to change a workload never leaves your hands.
   </Step>
   <Step title="The operator verifies">
     It waits out the verification window, re-runs detection, and either completes the remediation or restores the pre-patch state.
@@ -55,7 +55,7 @@ The healing loop is what Level 2 looks like end to end:
 </Steps>
 
 <Note>
-  **Auto-approve graduation is not implemented.** `policies.selfHealing.mode` on the `ClusterPersona` decides how far the loop goes on its own — `observe` proposes nothing, `propose` (the default) proposes and waits — but `auto-approve` is accepted only for forward compatibility: the operator logs a warning and treats it as `propose`. `trustLevel` (0–5) and `RemediationAction`'s `approval.autoApproveRule` are ignored entirely. **Every remediation waits for a human**, whatever the mode or trust level says. `maxRemediationsPerHour` and `excludeNamespaces` on that same policy *are* enforced.
+  **Auto-approve graduation is not implemented.** `policies.selfHealing.mode` on the `ClusterPersona` decides how far the loop goes on its own. `observe` proposes nothing and `propose` (the default) proposes and waits. `auto-approve` is accepted only for forward compatibility: the operator logs a warning and treats it as `propose`. `trustLevel` (0–5) and `RemediationAction`'s `approval.autoApproveRule` are ignored entirely. **Every remediation waits for a human**, whatever the mode or trust level says. `maxRemediationsPerHour` and `excludeNamespaces` on that same policy *are* enforced.
 </Note>
 
 ## Ownership is a second axis
@@ -89,7 +89,7 @@ The Operator is permitted to:
 - **Validate** workloads against Persona constraints
 - **Recommend** changes via status fields and `RemediationAction` proposals
 - **Update** Persona CRD status and learned fields
-- **Patch** the ApplicationPersona `spec` — but only the fields in a `RemediationAction` a human has approved
+- **Patch** the ApplicationPersona `spec`, limited to the fields in a `RemediationAction` a human has approved
 
 The Operator is **not** permitted to:
 

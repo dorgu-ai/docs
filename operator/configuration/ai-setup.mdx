@@ -73,7 +73,7 @@ There are two knobs, not one, and they are worth separating before you set eithe
     AI remediation planning enabled {"provider": "claude"}
     ```
 
-    Both must appear. `AI diagnosis enabled` on its own means the planner did not start — check that `aiRemediation.enabled=true` and `llm.provider=claude`.
+    Both must appear. `AI diagnosis enabled` on its own means the planner did not start. Check that `aiRemediation.enabled=true` and `llm.provider=claude`.
   </Step>
 </Steps>
 
@@ -94,7 +94,7 @@ There are two knobs, not one, and they are worth separating before you set eithe
 | `llm.cacheTTL` | `30m` | How long an unchanged diagnosis or plan is reused. `0` asks the model every cycle. See [how often the model is asked](#how-often-the-model-is-asked-and-what-it-may-return). |
 | `llm.existingSecret` | `""` | Name of a pre-created Secret holding the key. **Preferred.** |
 | `llm.existingSecretKey` | `""` | Key within that Secret. Empty means `ANTHROPIC_API_KEY` for `claude` and `GEMINI_API_KEY` for `gemini` |
-| `llm.apiKey` | `""` | Dev only — a raw key, stored in a chart-managed Secret. Requires `createSecret=true`. |
+| `llm.apiKey` | `""` | Dev only: a raw key, stored in a chart-managed Secret. Requires `createSecret=true`. |
 | `llm.createSecret` | `false` | When true and `apiKey` is set, the chart creates the Secret for you |
 | `aiRemediation.enabled` | `false` | Maps to `--enable-ai-remediation`. Only has effect when `llm.provider` is set. |
 
@@ -115,10 +115,10 @@ helm upgrade --install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-char
 The chart injects the key as `GEMINI_API_KEY` from the Secret, and the operator sends it to Google in a request header, never in the URL. Any other `llm.provider` value fails `helm install` with an error instead of starting an operator with AI silently off.
 
 <Warning>
-  Prefer `llm.existingSecret` in any shared or production cluster. `llm.apiKey` never reaches the pod spec — the chart still delivers it via `secretKeyRef` — but it *is* recorded in the Helm release, so `helm get values` and `helm template` will print the raw key to anyone with access. `existingSecret` keeps the key out of Helm entirely.
+  Prefer `llm.existingSecret` in any shared or production cluster. `llm.apiKey` never reaches the pod spec (the chart still delivers it via `secretKeyRef`), but it *is* recorded in the Helm release, so `helm get values` and `helm template` will print the raw key to anyone with access. `existingSecret` keeps the key out of Helm entirely.
 </Warning>
 
-If neither `llm.existingSecret` nor a chart-managed Secret is configured, the chart renders no `env:` block, the operator finds no API key for the provider, and it logs `LLM provider configured but no API key found, AI diagnosis disabled` — then runs rule-based.
+If neither `llm.existingSecret` nor a chart-managed Secret is configured, the chart renders no `env:` block, the operator finds no API key for the provider, and it logs `LLM provider configured but no API key found, AI diagnosis disabled`. It then runs rule-based.
 
 ## How often the model is asked, and what it may return
 
@@ -132,7 +132,7 @@ One consequence to plan for: while the signals are unchanged, an incident can sh
 
 ## Egress
 
-The operator calls the Anthropic API directly from its pod. On a private cluster it needs outbound HTTPS — through a NAT gateway, an egress proxy, or whatever your network policy allows. If egress is blocked, AI planning fails and logs `AI remediation planning failed, falling back to rules`; the loop keeps working on the deterministic path.
+The operator calls the Anthropic API directly from its pod. On a private cluster it needs outbound HTTPS, which can go through a NAT gateway, an egress proxy, or whatever your network policy allows. If egress is blocked, AI planning fails and logs `AI remediation planning failed, falling back to rules`; the loop keeps working on the deterministic path.
 
 ## Turn it off
 

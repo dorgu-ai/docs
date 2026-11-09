@@ -41,7 +41,7 @@ Everything in this guide works without it. When you do want it, [AI setup](/oper
 
 ## Step 2: Confirm cluster discovery
 
-The operator auto-creates a cluster-scoped `ClusterPersona` named `dorgu-cluster` on startup and populates it with nodes, add-ons, capacity, Kubernetes version, and platform type — typically within seconds.
+The operator auto-creates a cluster-scoped `ClusterPersona` named `dorgu-cluster` on startup and populates it with nodes, add-ons, capacity, Kubernetes version, and platform type. This typically takes seconds.
 
 ```bash
 dorgu cluster status
@@ -101,7 +101,7 @@ spec:
 dorgu persona status nginx -n demo
 ```
 
-The operator validates the running Deployment against the persona and reports issues in `.status.validation.issues` — missing resource requests, an unenforced `runAsNonRoot`, a missing liveness probe. The phase reflects the overall state (`Active`, `Degraded`, or `Failed`), and it re-validates every 60 seconds or immediately when the Deployment changes. See [validation](/operator/features/validation).
+The operator validates the running Deployment against the persona and reports issues in `.status.validation.issues`, such as missing resource requests, an unenforced `runAsNonRoot`, or a missing liveness probe. The phase reflects the overall state (`Active`, `Degraded`, or `Failed`), and it re-validates every 60 seconds or immediately when the Deployment changes. See [validation](/operator/features/validation).
 
 <Note>
   **No label is required on the Deployment.** The operator resolves a persona to its workload through an ordered chain: the `app.kubernetes.io/name` label on the Deployment, then the `app` label, then `metadata.name`, then `spec.selector.matchLabels`. Helm, kustomize, and most hand-written YAML label the pod template only, and that resolves through the last rung. When it cannot resolve, the persona reports `NoDeployment` or `AmbiguousDeployment` and names what it tried: see [troubleshooting](/operator/features/self-healing#troubleshooting).
@@ -168,7 +168,7 @@ kubectl -n demo get pods
 ```
 
 <Note>
-  The remediation stays in `Applying` / `Verifying` for the verification window — 10 minutes by default — before it reports `Completed`. At the end of that window the operator re-runs detection and rolls the change back automatically if health regressed. Your pod is healthy well before then.
+  The remediation stays in `Applying` / `Verifying` for the verification window (10 minutes by default) before it reports `Completed`. At the end of that window the operator re-runs detection and rolls the change back automatically if health regressed. Your pod is healthy well before then.
 </Note>
 
 <Warning>

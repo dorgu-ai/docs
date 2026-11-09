@@ -119,8 +119,8 @@ Fewer than five means an incomplete install. See [Verify installation](/operator
     ```
 
     Common causes:
-    - **Insufficient RBAC** — The operator service account needs cluster-wide permissions to watch CRDs. Re-run the Helm install to ensure RBAC resources are created.
-    - **CRD version mismatch** — Helm only installs the CRDs on first install, never on upgrade. After upgrading the operator, re-apply them from the chart (see below).
+    - **Insufficient RBAC**: The operator service account needs cluster-wide permissions to watch CRDs. Re-run the Helm install to ensure RBAC resources are created.
+    - **CRD version mismatch**: Helm only installs the CRDs on first install, never on upgrade. After upgrading the operator, re-apply them from the chart (see below).
   </Accordion>
 
   <Accordion title="dorgu persona import or cluster status reports 'resource not found'">
