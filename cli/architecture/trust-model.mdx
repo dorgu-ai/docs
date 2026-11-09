@@ -24,14 +24,14 @@ Dorgu implements **Levels 0 through 2**. Levels 3 through 5 are planned.
 - Reads what the operator detected and proposed, and renders it for review: `dorgu health`, `dorgu incidents`, `dorgu remediation diff`
 - Produces ApplicationPersona CRDs from the Deployments already running (`dorgu persona import`), printed for review before anything reaches the cluster
 - Records your decision on the `RemediationAction` when you approve or reject
-- **Applies an approved remediation to the running workload, when that workload is Dorgu's to change.** When you run `dorgu remediation approve`, the CLI translates the fix you reviewed into a Deployment patch and applies it with your credentials, after showing you the exact namespace, Deployment, container, and fields, and asking for confirmation. If something else reconciles that Deployment, it declines instead and hands you the owner-shaped steps (see [ownership](#ownership-is-a-second-axis))
+- **Applies an approved remediation to the running workload, when that workload is Dorgu's to change.** When you run `dorgu remediation approve`, the CLI waits for the operator's apply ticket, translates the ticketed change into a Deployment patch and applies it with your credentials, after showing you the exact namespace, Deployment, container, and fields, and asking for confirmation. If something else reconciles that Deployment, it declines instead and hands you the owner-shaped steps (see [ownership](#ownership-is-a-second-axis))
 
 **Operator (Level 0-2: OBSERVE / RECOMMEND / PROPOSE)**
 - Observes cluster state by watching Deployments, Pods, Nodes, and integration resources (ArgoCD, Prometheus)
 - Detects incidents, diagnoses root cause, and proposes an ordered fix as a `RemediationAction` — always in phase `Pending`, always requiring human approval
 - Validates running workloads against their ApplicationPersona constraints
 - Recommends improvements by writing suggestions to the persona's `status.recommendations` field
-- Applies an **approved** remediation's patch to the ApplicationPersona spec, then verifies the outcome and rolls it back automatically if health regresses
+- Re-checks an approval against the live cluster, issues a short-lived apply ticket, applies the ticket to the ApplicationPersona spec, then verifies the outcome and rolls the persona back automatically if health regresses
 
 Neither the CLI nor the Operator ever deploys, scales, or modifies a workload without a human decision.
 

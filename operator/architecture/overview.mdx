@@ -11,7 +11,7 @@ The dorgu operator is a Kubernetes operator built with [controller-runtime](http
 |-----------|-------------|
 | **Read-only workloads** | The operator NEVER writes to workload resources (Deployments, Services). It writes only its own CRDs. |
 | **Fail-open** | If the operator is down or encounters errors, workloads are unaffected. It registers no admission webhook, so nothing in the request path of your Deployments depends on it. |
-| **Opt-in features** | The core controllers and the self-healing loop are on by default. AI, Prometheus, and WebSocket require explicit opt-in. |
+| **Opt-in features** | The core controllers and the self-healing loop are on by default. AI, Prometheus, and the event pipeline require explicit opt-in. |
 | **No ArgoCD dependency** | ArgoCD integration uses the unstructured API — no compile-time dependency on ArgoCD types. |
 | **Graceful degradation** | Missing integrations (no Prometheus, no ArgoCD) are silently skipped without affecting core functionality. |
 
@@ -51,12 +51,8 @@ dorgu-operator/
 │   ├── remediation/                  # Proposer, guardrails, executor
 │   ├── events/                       # DorguEvent pipeline and retention
 │   ├── llm/                          # Model provider clients
-│   ├── workload/                     # Live workload and ownership reads
-│   │
-│   └── websocket/                    # Optional WebSocket server
-│       ├── server.go                 # Server lifecycle, client management
-│       ├── handlers.go               # Message handlers
-│       └── protocol.go              # Message types and payloads
+│   ├── harness/gate/                 # The gate: validate, ground, ownership, guardrails, mode, dedup
+│   └── workload/                     # Live workload and ownership reads
 │
 ├── charts/dorgu-operator/            # Helm chart
 ├── config/                           # Kustomize manifests (CRDs, RBAC)
@@ -111,11 +107,11 @@ flowchart TD
     ArgoCheck -->|No| HCCheck
     AW --> HCCheck{"Health check enabled?"}
     HCCheck -->|Yes| HC["Register health-check reconciler"]
-    HCCheck -->|No| WSCheck
-    HC --> WSCheck{"WebSocket enabled?"}
-    WSCheck -->|Yes| WS["Start WebSocket server"]
-    WSCheck -->|No| Health
-    WS --> Health["Register health checks"]
+    HCCheck -->|No| EPCheck
+    HC --> EPCheck{"Event pipeline enabled?"}
+    EPCheck -->|Yes| EP["Start event watcher and cleaner"]
+    EPCheck -->|No| Health
+    EP --> Health["Register health checks"]
     Health --> Run["Start manager"]
 ```
 

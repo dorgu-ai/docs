@@ -91,6 +91,7 @@ There are two knobs, not one, and they are worth separating before you set eithe
 |-------|---------|-------------|
 | `llm.provider` | `""` | `claude` enables Anthropic. Empty disables AI entirely. `gemini` enables AI *diagnosis* only, since the remediation planner requires `claude`. |
 | `llm.model` | `""` | Model override. Empty uses the provider default (`claude-sonnet-4-6` for the planner). |
+| `llm.cacheTTL` | `30m` | How long an unchanged diagnosis or plan is reused. `0` asks the model every cycle. See [how often the model is asked](#how-often-the-model-is-asked-and-what-it-may-return). |
 | `llm.existingSecret` | `""` | Name of a pre-created Secret holding the key. **Preferred.** |
 | `llm.existingSecretKey` | `""` | Key within that Secret. Empty means `ANTHROPIC_API_KEY` for `claude` and `GEMINI_API_KEY` for `gemini` |
 | `llm.apiKey` | `""` | Dev only — a raw key, stored in a chart-managed Secret. Requires `createSecret=true`. |
@@ -118,6 +119,16 @@ The chart injects the key as `GEMINI_API_KEY` from the Secret, and the operator 
 </Warning>
 
 If neither `llm.existingSecret` nor a chart-managed Secret is configured, the chart renders no `env:` block, the operator finds no API key for the provider, and it logs `LLM provider configured but no API key found, AI diagnosis disabled` — then runs rule-based.
+
+## How often the model is asked, and what it may return
+
+New in **operator v0.13.0**. Two rules keep model use bounded and keep model text away from control flow.
+
+**It is asked once per changed situation, not once per cycle.** A diagnosis or plan is cached by the incident's signal fingerprint (category, severity, persona, and each signal's type, severity and workload; never message text, values or times) and reused until the signals change or `llm.cacheTTL` (default `30m`) runs out. A failed or unusable reply suppresses a retry for 5 minutes. `llm.cacheTTL=0` asks every health-check cycle. Cluster-scoped findings (nodes, control plane) are never sent, and neither is an incident the planner would never act on (an `unattributed` one). The cost is visible in [`dorgu_llm_requests_total`, `dorgu_llm_tokens_total` and `dorgu_llm_cache_total`](/operator/reference/metrics#the-model).
+
+**A diagnosis reply must be strict JSON.** The model returns `summary`, `rootCause`, `recommendedAction` and `confidence`. Anything else is discarded and the rule-based diagnosis stands: prose, an unknown action, a confidence outside 0 to 1, extra fields, a repeated key or a key in the wrong case, or control characters (ANSI or terminal escape sequences) in `summary` or `rootCause`. Discards are counted in `dorgu_llm_invalid_output_total`. The incident shows the model's `summary`. The model's `recommendedAction` and `confidence` are logged and never acted on: **the rules choose the action and the deduplication key.** Gemini is asked for JSON and validated the same way.
+
+One consequence to plan for: while the signals are unchanged, an incident can show the model's first answer for up to `llm.cacheTTL`, so it may name a pod that has since been replaced. The prompt tells the model to name the Deployment and not to quote counts, and the authoritative occurrence count is `status.occurrenceCount`.
 
 ## Egress
 

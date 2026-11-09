@@ -59,11 +59,11 @@ The command above resolves the newest published chart. To pin an exact version f
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
   --namespace dorgu-system \
   --create-namespace \
-  --version 0.12.1
+  --version 0.13.0
 ```
 
 <Note>
-  The chart version and the operator version are the same number, so `--version 0.12.1` installs operator `v0.12.1`. If the literal above has fallen behind, [Versions](#versions) is the statement to trust on this page, and [operator releases](https://github.com/dorgu-ai/dorgu-operator/releases) is the statement to trust over both.
+  The chart version and the operator version are the same number, so `--version 0.13.0` installs operator `v0.13.0`. If the literal above has fallen behind, [Versions](#versions) is the statement to trust on this page, and [operator releases](https://github.com/dorgu-ai/dorgu-operator/releases) is the statement to trust over both.
 </Note>
 
 ### Install with a values file
@@ -107,7 +107,7 @@ cd dorgu-operator
 make install
 
 # Deploy the operator
-make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.12.1
+make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.13.0
 ```
 
 To reverse it:
@@ -227,7 +227,7 @@ Look for `Phase 2a/2b health check and remediation enabled` with the interval. I
 helm uninstall dorgu-operator -n dorgu-system
 ```
 
-That removes everything Helm actually owns: the operator Deployment, the ServiceAccount, the `dorgu-operator-manager` ClusterRole and ClusterRoleBinding, and the WebSocket Service where you enabled it. The operator stops within seconds and nothing further is detected, diagnosed, or proposed.
+That removes everything Helm actually owns: the operator Deployment, the ServiceAccount, the `dorgu-operator-manager` ClusterRole and ClusterRoleBinding, and the metrics Service. The operator stops within seconds and nothing further is detected, diagnosed, or proposed.
 
 ### 2. Know what is still there
 
@@ -248,6 +248,8 @@ clusterpersona        1      remediationaction 13
 ```
 
 `DorguEvent` records reach `kube-system` because they are written into the namespace of the object they describe, and Dorgu watches the whole cluster. That is worth knowing before you install, not after.
+
+That run was on operator `v0.12.x`. From `v0.13.0` the event pipeline is off by default, so no `DorguEvent` records are written unless you turn it on with `eventPipeline.enabled=true`, and the `dorguevent` count above is zero on a fresh install. The `incidentmemory` and `remediationaction` records remain.
 
 ### 3. Keep the history, if you want it
 

@@ -27,7 +27,7 @@ List IncidentMemory resources from the cluster. By default, only active incident
 | `--phase` | string | all | Filter by phase: `Detected`, `Investigating`, `Resolved`, `Recurring` |
 | `--all` | bool | `false` | Include resolved incidents |
 | `--limit` | int | `50` | Maximum number of incidents to display |
-| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
+| `--kubeconfig` | string | `kubectl`'s own resolution: `$KUBECONFIG`, then `~/.kube/config` | Path to kubeconfig file |
 | `--json` | bool | `false` | Output as JSON (inherited global flag) |
 
 ### Examples
@@ -58,12 +58,20 @@ dorgu incidents list --json
 | SEVERITY | `info`, `warning`, or `critical` |
 | CATEGORY | Incident category (e.g. `resource`, `security`) |
 | SIGNAL | Detection signal (e.g. `OOMKilled`, `CrashLoopBackOff`) |
-| PERSONA | ApplicationPersona the incident relates to. On an **unattributed** incident this is the workload name, and no persona of that name exists. |
+| PERSONA | ApplicationPersona the incident relates to. An **unattributed** incident shows the workload with `(no persona)` after it, such as `report-worker (no persona)`, because no persona of that name exists. |
 | PHASE | `Detected`, `Investigating`, `Resolved`, or `Recurring` |
 | AGE | Time since the incident was created |
 
+```text
+Active Incidents (2)
+
+NAMESPACE  NAME                                  SEVERITY  CATEGORY  SIGNAL            PERSONA                     PHASE          AGE
+shop       oom-checkout-api-7c1f                 warning   resource  OOMKilled         checkout-api                Investigating  1h
+apps       crashloop-report-worker-unattributed  warning   health    CrashLoopBackOff  report-worker (no persona)  Detected       9m
+```
+
 <Note>
-  **Unattributed incidents look like any other row.** Where no single `ApplicationPersona` claims a workload's signals, the operator files the incident against the workload rather than folding it into a neighbouring app's, and proposes no remediation for it. The column above shows that workload name. Separate them with the label:
+  **Unattributed incidents are marked `(no persona)`.** Where no single `ApplicationPersona` claims a workload's signals, the operator files the incident against the workload rather than folding it into a neighbouring app's. It is diagnosed, and **no remediation is proposed for it**. The PERSONA column shows the workload name with `(no persona)` so a workload never passes for a persona. `dorgu health` marks them the same way, and its `--json` output carries `attribution` on each incident. Separate them with the label:
 
   ```bash
   kubectl get incidentmemory -A -l dorgu.io/attribution=unattributed
@@ -71,6 +79,8 @@ dorgu incidents list --json
 
   The usual fix is to import a persona for the app: [`dorgu persona import`](/cli/commands/persona#persona-import). See [one application at a time](/operator/features/self-healing#one-application-at-a-time).
 </Note>
+
+A fault that comes back after its incident resolved appears as a new row named `<first-name>-r<N>`. A fault that changes shape (not Ready, then restarting, then crash-looping) stays one row whose SIGNAL changes. See [one fault, one incident](/operator/features/self-healing#one-fault-one-incident).
 
 ---
 
@@ -89,7 +99,7 @@ Display detailed information about a specific IncidentMemory resource, including
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-n, --namespace` | string | **required** | Namespace of the incident |
-| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
+| `--kubeconfig` | string | `kubectl`'s own resolution: `$KUBECONFIG`, then `~/.kube/config` | Path to kubeconfig file |
 | `--json` | bool | `false` | Output as JSON (inherited global flag) |
 
 ### Examples
@@ -108,12 +118,64 @@ dorgu incidents describe im-default-api-oom-a3f2 -n default --json
 |---------|-------------|
 | **Phase / Severity / Category** | Current incident status and classification |
 | **Signal** | The detection signal that triggered the incident |
-| **Persona** | The ApplicationPersona reference (kind, name, namespace) |
+| **Persona** | The ApplicationPersona reference (kind, name, namespace). An unattributed incident shows a **Subject** block instead: its attribution, the workload and namespace, a statement that there is no persona and so no remediation, and the `dorgu persona import` command that onboards it. |
 | **Detection** | Source, first seen, last seen timestamps |
 | **Affected Resources** | Kubernetes resources involved (kind, name, namespace) |
-| **Root Cause** | LLM-generated analysis with confidence score and contributing signals |
+| **Root Cause** | The diagnosis summary with confidence score, provider (`rule-based` or `ai-enhanced`) and contributing signals |
 | **Resolution** | Action taken, outcome, and timestamp (if resolved) |
 | **Occurrences** | Total number of times this incident has been detected |
+
+### Example output
+
+Model-written text arrives as markdown. The CLI renders it as plain text, keeping every line indented under its label, so a terminal shows no `##`, `**` or backticks. `--json` keeps the original text.
+
+```text
+Incident: oom-checkout-api-7c1f
+═══════════════════════════════
+
+Phase:     Investigating
+Severity:  warning
+Category:  resource
+Signal:    OOMKilled
+
+Persona:
+  Kind:      ApplicationPersona
+  Name:      checkout-api
+  Namespace: shop
+
+Detection:
+  Source:     health-check
+  First Seen: 2026-11-09 08:00:00 (1h ago)
+  Last Seen:  2026-11-09 08:12:00 (48m ago)
+
+Affected Resources:
+  - Deployment/checkout-api (shop)
+
+Root Cause:
+  Summary:    The checkout-api container is being OOM-killed: its memory limit of 256Mi is below what it needs under load.
+
+              - Raise the memory limit.
+              - Watch for a leak if it recurs.
+  Confidence: 90%
+  Provider:   ai-enhanced
+  Contributing Signals:
+    - OOMKilled: container checkout-api terminated with reason OOMKilled
+    - CrashLoopBackOff: container is in CrashLoopBackOff
+
+Occurrences: 4
+```
+
+For an unattributed incident the Persona block becomes:
+
+```text
+Subject:
+  Attribution: unattributed
+  Workload:    report-worker
+  Namespace:   apps
+  There is no ApplicationPersona for this workload, so this incident is recorded against the
+  workload itself. Dorgu diagnoses it but proposes no remediation.
+  To onboard it: dorgu persona import -n apps
+```
 
 <Note>
   Requires the Dorgu Operator to be installed on the cluster. If the `IncidentMemory` CRD is not registered, the command will report an error with installation instructions.

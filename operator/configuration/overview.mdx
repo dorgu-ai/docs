@@ -18,7 +18,7 @@ The operator is configured through command-line flags, which map directly to Hel
 | ClusterPersona bootstrap | Enabled | `--auto-create-cluster-persona` | Auto-creates `dorgu-cluster` on startup |
 | ArgoCD watcher | Enabled | `--enable-argocd` | Watches ArgoCD Applications for sync status |
 | Prometheus integration | Disabled | `--prometheus-url` | Queries Prometheus for resource baselines |
-| WebSocket server | Disabled | `--enable-websocket` | Optional event stream; no CLI command uses it since CLI `v0.13.0` |
+| Event pipeline | Disabled | `--enable-event-pipeline` | Kubernetes-Event watcher and `DorguEvent` records. Nothing reads them yet, so it is off since `v0.13.0`. |
 | Leader election | Disabled (flag default; enabled in Helm chart) | `--leader-elect` | HA mode for multi-replica deployments |
 | Secure metrics | Enabled | `--metrics-secure` | HTTPS metrics endpoint with RBAC |
 
@@ -52,10 +52,18 @@ The operator is configured through command-line flags, which map directly to Hel
 |------|------|---------|-------------|
 | `--enable-health-check` | bool | `true` | Enable the health-check reconciler: detection, diagnosis, and remediation proposals. When `false`, the operator records persona health only and never opens an incident or proposes a fix. Defaulted to `false` in the binary before `v0.12.0`. |
 | `--health-check-interval` | duration | `60s` | Detection cycle interval |
+| `--readiness-threshold` | duration | `2m` | How long a running container may stay not Ready before a `ReadinessNotReady` incident (**v0.13.0**) |
+| `--liveness-restart-count` | int | `2` | Restarts within `--liveness-restart-window` that raise `LivenessRestarts` or `RestartLoop` (**v0.13.0**) |
+| `--liveness-restart-window` | duration | `10m` | The restart window. Must be at least twice `--health-check-interval`, or the operator refuses to start (**v0.13.0**) |
+| `--incident-recurrence-cap` | int | `3` | Recurrences of one fault within `--incident-recurrence-window` before the latest incident is reopened instead of a new one created. `0` disables the cap (**v0.13.0**) |
+| `--incident-recurrence-window` | duration | `24h` | The recurrence window (**v0.13.0**) |
+| `--resolved-incident-retention` | duration | `720h` | Resolved incidents older than this are deleted, except the newest of each fault and any a live RemediationAction names. `0` keeps them. Must not be shorter than the recurrence window (**v0.13.0**) |
+| `--remediation-pending-ttl` | duration | `24h` | A `Pending` proposal older than this becomes `Expired`. `0` disables the TTL (**v0.13.0**) |
 | `--enable-metrics-server` | bool | `true` | Enable metrics-server integration for container-level detection |
 | `--llm-provider` | string | `""` | `claude` or `gemini` for AI-enhanced diagnosis. Empty disables AI. |
 | `--llm-api-key` | string | `""` | API key, overriding the `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` env vars |
 | `--llm-model` | string | `""` | Model override for the provider |
+| `--llm-cache-ttl` | duration | `30m` | How long an AI diagnosis or plan is reused while the incident's signals are unchanged. `0` asks the model every cycle (**v0.13.0**) |
 | `--safety-excluded-namespaces` | string | `""` | Comma-separated namespaces Dorgu never proposes a remediation in, on top of `kube-system` and its own namespace (read from `POD_NAMESPACE`). See [remediation safety](/operator/configuration/helm-values#remediation-safety). |
 | `--enable-ai-remediation` | bool | `true` | Enable AI-written ordered remediation plans. Requires `--llm-provider=claude` and a key; falls back to the deterministic rules otherwise. |
 
@@ -76,8 +84,13 @@ The Helm chart never passes `--llm-api-key`. It injects the key as an environmen
 |------|------|---------|-------------|
 | `--enable-argocd` | bool | `true` | Enable ArgoCD Application watching |
 | `--prometheus-url` | string | `""` | Prometheus server URL for baseline learning |
-| `--enable-websocket` | bool | `false` | Enable the [WebSocket server](/operator/features/websocket) |
-| `--websocket-addr` | string | `:9090` | WebSocket server listen address |
+| `--enable-event-pipeline` | bool | `false` | Run the Kubernetes-Event watcher and write `DorguEvent` records (**v0.13.0**) |
+| `--dorgu-event-retention` | duration | `24h` | How long a `DorguEvent` is kept. Used only with `--enable-event-pipeline` |
+| `--dorgu-event-max-records` | int | `2000` | Maximum `DorguEvent` records kept. `0` drops the cap. Used only with `--enable-event-pipeline` |
+
+<Warning>
+  **Operator `v0.13.0` removed the WebSocket server** and its flags, `--enable-websocket` and `--websocket-addr`. Passing either stops the binary from starting with `flag provided but not defined`. See the [upgrade guide](/upgrade-guide#the-websocket-server-is-removed).
+</Warning>
 
 <Info>
 The ArgoCD watcher only activates if both `--enable-argocd=true` **and** the ArgoCD Application CRD (`argoproj.io/v1alpha1`) is detected in the cluster. If the CRD is missing, the watcher silently skips registration.

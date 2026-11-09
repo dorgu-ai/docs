@@ -45,7 +45,7 @@ flowchart LR
     Deterministic rules compute a bounded fix against the live container and return an ordered plan with a per-step YAML diff. That is the default path and needs no key. With the AI planner turned on, Claude writes the plan instead, reading your app persona, cluster persona, past incidents, and **which past fixes actually worked**. Either way the guardrails are the same, only persona updates are ever auto-executable, and every verdict a guardrail reaches is [Dorgu's own arithmetic](/operator/features/self-healing#guardrail-verdicts-as-data).
   </Step>
   <Step title="Approve">
-    You review the plan with `dorgu remediation diff` and approve with one command. Approval is required by default.
+    You review the plan with `dorgu remediation diff` and approve with one command. Approval is required by default, and the operator checks it again against the live cluster before anything is applied. See [How Dorgu decides](/how-dorgu-decides).
   </Step>
   <Step title="Heal, or hand over">
     The operator updates the app's desired state. Where nothing else reconciles the Deployment, the CLI applies the change with your credentials and the pod recovers. Where Helm, ArgoCD, or Flux owns it, Dorgu names the owner and tells you what to change in your source of truth instead. It does not fight your deployment tool.

@@ -15,7 +15,7 @@ Display a comprehensive cluster health summary by querying the Kubernetes API di
 
 When the Dorgu Operator is installed, the command adds `IncidentMemory` and `RemediationAction` data. Without the operator it degrades to nodes, resource saturation, and control plane, all of which come from the Kubernetes API and need nothing installed.
 
-It also names what it **cannot** see: any Deployment with no matching `ApplicationPersona` is listed under [Unmonitored](#unmonitored-deployments), because a workload Dorgu is not watching can never appear as an incident.
+It also names what it **cannot** see: any Deployment with no matching `ApplicationPersona` is listed under [Unmonitored](#unmonitored-deployments), because Dorgu does not watch it as an application and plans nothing for it. If one of its pods fails, the operator can still record an **unattributed** incident against the workload, and it shows as `<workload> (no persona)`: diagnosed, with no remediation.
 
 <Warning>
   **Breaking in CLI v0.12.0: `--json` reports saturation in a new shape, and the old `used` key never meant used.**
@@ -33,7 +33,7 @@ It also names what it **cannot** see: any Deployment with no matching `Applicati
 |------|------|---------|-------------|
 | `-n, --namespace` | string | all namespaces | Filter incidents by namespace, and include that namespace's Deployments in the unmonitored check even if it is a cluster add-on namespace |
 | `--exit-code` | bool | `false` | Exit 2 when critical incidents are active, 3 when health cannot be judged. For monitoring scripts. |
-| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
+| `--kubeconfig` | string | `kubectl`'s own resolution: `$KUBECONFIG`, then `~/.kube/config` | Path to kubeconfig file |
 | `--json` | bool | `false` | Output as JSON (inherited global flag) |
 | `--context` | string | the kubeconfig's current-context | kube-context to read (inherited global flag) |
 
@@ -72,7 +72,7 @@ They are two columns because they call for different actions and used to share o
 <Warning>
   **This replaces a figure that could be wrong without limit.** `dorgu health` printed **1689% CPU** on a cluster where 25% was requested and 1% was in use. The number was not the CLI's: it was `ClusterPersona.status.resourceSummary.cpuUtilization` rendered verbatim, and the operator computed it as the requests of every non-terminal pod over node allocatable. A pod no node has accepted is non-terminal, so a backlog of unschedulable pods inflated the figure with no upper bound, because such a pod can request more than the cluster owns.
 
-  Computing it in the CLI is deliberate rather than duplicated work. `dorgu health` documents itself as querying the Kubernetes API directly, saturation was the one section that did not, and a figure read from a five-minute-stale field on whatever operator version happens to be installed cannot be relied on. The same defect is [fixed at the source in operator v0.11.0](/operator/features/self-healing), because the dashboard reads that field.
+  Computing it in the CLI is deliberate rather than duplicated work. `dorgu health` documents itself as querying the Kubernetes API directly, saturation was the one section that did not, and a figure read from a five-minute-stale field on whatever operator version happens to be installed cannot be relied on. The same defect is [fixed at the source in operator v0.11.0](/operator/features/self-healing), because anything that renders that field would show the same number. (The dashboard that once did, `dorgu platform serve`, was removed in CLI v0.13.0, and the CLI has no dashboard command today.)
 </Warning>
 
 ### Unscheduled pods are excluded, and counted
@@ -115,7 +115,7 @@ Requested still reports without it. An absent figure is never printed as `0`, an
 
 ## Unmonitored Deployments
 
-Dorgu only watches workloads that have an `ApplicationPersona`. A Deployment without one raises no incident no matter what it does, so reporting `Active Incidents: 0` for a cluster full of unmonitored apps would present a blind spot as health.
+Dorgu only watches workloads that have an `ApplicationPersona`. A Deployment without one is not watched as an application. Its pods can still raise an unattributed incident when they fail, but only for the failure signals the operator sees on pods, and nothing is ever proposed for it. Reporting `Active Incidents: 0` for a cluster full of unmonitored apps would present a blind spot as health.
 
 The `Unmonitored` section names them:
 
@@ -244,7 +244,7 @@ When `--json` is set, the output follows this structure:
     ]
   },
   "activeIncidents": {
-    "count": 1,
+    "count": 2,
     "items": [
       {
         "severity": "warning",
@@ -254,6 +254,16 @@ When `--json` is set, the output follows this structure:
         "namespace": "default",
         "name": "im-default-api-oom-a3f2",
         "age": "2h"
+      },
+      {
+        "severity": "warning",
+        "category": "health",
+        "signal": "CrashLoopBackOff",
+        "persona": "report-worker",
+        "attribution": "unattributed",
+        "namespace": "apps",
+        "name": "crashloop-report-worker-unattributed",
+        "age": "9m"
       }
     ]
   },
@@ -268,6 +278,8 @@ When `--json` is set, the output follows this structure:
   }
 }
 ```
+
+`attribution` is present on an incident only when the operator recorded one, and `unattributed` means no `ApplicationPersona` claims the workload: `persona` then holds the workload name, and no persona of that name exists. The text output shows these as `<workload> (no persona)`. An unattributed incident is diagnosed and never gets a remediation.
 
 `unmonitored.items` is the full, uncapped list even when the human-readable output truncated it. `unmonitored.personaCRDMissing` is present and `true` when the `ApplicationPersona` CRD is not installed.
 

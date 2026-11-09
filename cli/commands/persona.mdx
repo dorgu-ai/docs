@@ -41,7 +41,7 @@ It prints the YAML by default so you can read it before anything reaches the clu
 | `--dry-run` | bool | `true` (implied) | Print the personas without applying. This is the default; the flag is there to be explicit. |
 | `-o`, `--output` | string | — | Write the personas to a file instead of stdout |
 | `--apply` | bool | `false` | Apply the personas to the cluster |
-| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
+| `--kubeconfig` | string | `kubectl`'s own resolution: `$KUBECONFIG`, then `~/.kube/config` | Path to kubeconfig file |
 
 Exactly one of `--all` or `--name` is required, and they are mutually exclusive. `--apply` and `--dry-run` are mutually exclusive.
 
@@ -131,7 +131,7 @@ List the `ApplicationPersona` resources on the cluster with their phase, health,
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-n`, `--namespace` | string | all namespaces | Namespace to list |
-| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
+| `--kubeconfig` | string | `kubectl`'s own resolution: `$KUBECONFIG`, then `~/.kube/config` | Path to kubeconfig file |
 | `--json` | bool | `false` | Output the raw resource list as JSON (inherited global flag) |
 
 ### Example output
@@ -182,7 +182,7 @@ Check the reconciliation status of an `ApplicationPersona` by name. Requires exa
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-n`, `--namespace` | string | `default` | Kubernetes namespace to query |
-| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
+| `--kubeconfig` | string | `kubectl`'s own resolution: `$KUBECONFIG`, then `~/.kube/config` | Path to kubeconfig file |
 
 ### Examples
 
