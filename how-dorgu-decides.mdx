@@ -73,7 +73,7 @@ A cleared proposal becomes a `RemediationAction` in phase `Pending`. Read it wit
 
 You then [approve](/cli/commands/remediation#remediation-approve) or [reject](/cli/commands/remediation#remediation-reject). A proposal nobody decides within 24 hours (`remediation.pendingTTL`) becomes `Expired`: terminal, nothing applied, no cooldown, and Dorgu may propose again if the problem persists.
 
-Only an action the operator itself proposed can be approved. An action created by hand, by an agent, or by an older operator has no operator-written proposal record and is refused at approval.
+Only an action the operator itself proposed can be approved. An action created by hand, by an agent, or by an older operator has no operator-written proposal record and is refused at approval. One made by an older operator ends `Expired` with the reason `PredatesGate`, and the operator proposes again.
 
 ## The approval-time re-check and the apply ticket
 
@@ -103,7 +103,7 @@ After the verification window (10 minutes, set by the operator and not by the pl
 | Degraded | Rollback: the operator restores the persona fields it wrote, from the baseline the gate recorded. |
 | Unknown | Retried twice, then rolled back. "Could not look" is never read as "saw nothing": if any collector failed, the result is `Unknown`, not `Healthy`. |
 
-Rollback is narrower than it sounds. It restores the persona, and it never overwrites a field someone edited after the heal: that field is left alone and the incident outcome is `partial`. The operator cannot undo a Deployment patch, so when the persona is restored and the workload still carries the change, the outcome is `partial` and the `WorkloadDiverged` condition carries the command that finishes the job.
+Rollback is narrower than it sounds. It restores the persona, and it never overwrites a field someone edited after the heal: that field is left alone and the incident outcome is `partial`. The operator cannot undo a Deployment patch, so when the persona is restored and the workload still carries the change, the outcome is `partial` and the `WorkloadDiverged` condition names each field, its value now and before, and the `kubectl set resources` command that finishes the job. If the workload was never patched (an approval with `--no-heal`), `WorkloadDiverged` is `False` with the reason `WorkloadRestored`: there was nothing left to undo. A rollback that reverts the workload with your credentials is planned.
 
 ### Heal credit
 

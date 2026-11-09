@@ -70,7 +70,7 @@ flowchart LR
 | `RolledBack` | Verification found the health degraded (or could not be determined after retries), so the operator restored the persona fields it wrote. The Deployment is not rolled back by the operator. |
 | `Failed` | The gate refused at approval (`Applied=False`, reason `GateRefusedAtApproval`, nothing applied), the ticket was refused at apply, or the apply or the rollback failed. |
 | `Rejected` | You rejected it. |
-| `Expired` | Nobody decided within 24 hours, the approval deadline passed, or the incident escalated to a worse shape and this proposal was **superseded** (condition reason `Superseded`; the other reason is `ApprovalTimedOut`). Terminal, nothing applied, no cooldown. |
+| `Expired` | Terminal, nothing applied, no cooldown. The reason is on the `Expired` condition: `ApprovalTimedOut` (nobody decided within 24 hours, or the approval deadline passed), `Superseded` (the incident escalated to a worse shape and this proposal answered a milder one), or `PredatesGate` (the proposal was made by an operator older than v0.13.0, so it cannot be approved; the operator proposes again). |
 
 Two condition reasons are worth knowing, both on the `Applied` condition. `AdvisoryOnly` accompanies `Acknowledged`. `PreconditionRejected` marks a plan the executor refused before touching the cluster, and `GateRefusedAtApproval` marks one the gate refused when you approved it. Neither starts the 30-minute failure cooldown, since nothing in the cluster actually went wrong.
 
@@ -88,7 +88,7 @@ Two condition reasons are worth knowing, both on the `Applied` condition. `Advis
 dorgu remediation list [flags]
 ```
 
-Lists `RemediationAction` resources. By default it shows only active ones — `Pending`, `Approved`, `Applying`, `Verifying`, and `Failed`. Use `--all` to include `Completed`, `RolledBack`, `Rejected`, and `Expired`.
+Lists `RemediationAction` resources. By default it shows only active ones: `Pending`, `Approved`, `Ticketed`, `Applying`, `Verifying`, and `Failed`. Use `--all` to include `Completed`, `Acknowledged`, `RolledBack`, `Rejected`, and `Expired` (a superseded proposal is `Expired`).
 
 ### Flags
 
@@ -232,7 +232,7 @@ Rollback:
 
 Actions:
   dorgu remediation approve fix-oom-api-server -n production
-  dorgu remediation reject fix-oom-api-server -n production --reason <reason>
+  dorgu remediation reject fix-oom-api-server -n production --reason <wrong-diagnosis|too-risky|not-now|duplicate|not-needed|other> [--note "..."]
 ```
 
 Each step line reads `[order] type (risk; mode): description`, with the rationale indented underneath, an optional `Run:` command, and a unified diff of `prePatchState → patch` where the step carries one.
@@ -286,7 +286,7 @@ chart-specific, commonly under `resources`), then run your usual helm upgrade.
 
 Actions:
   dorgu remediation approve fix-oom-frontend -n apps --no-heal   (record the decision, patch no workload)
-  dorgu remediation reject fix-oom-frontend -n apps --reason <reason>
+  dorgu remediation reject fix-oom-frontend -n apps --reason <wrong-diagnosis|too-risky|not-now|duplicate|not-needed|other> [--note "..."]
 ```
 
 Once the action leaves `Pending`, that action block is gone, so the Deployment change block carries the fact instead: `Dorgu did not apply this: <owner> owns this Deployment.`
@@ -384,7 +384,7 @@ This plan is advisory: nothing in it can be applied for you.
 Carry out the steps above yourself. Nothing changes in the cluster until you do.
 
 Actions:
-  dorgu remediation reject fix-image-web -n demo --reason <reason>
+  dorgu remediation reject fix-image-web -n demo --reason <wrong-diagnosis|too-risky|not-now|duplicate|not-needed|other> [--note "..."]
 ```
 
 Approving one anyway is safe: it records the approval, changes nothing, and settles the action as `Acknowledged`. It used to be offered `approve` as its suggested next action, and following that advice failed the remediation and put the app into a 30-minute cooldown.
@@ -420,7 +420,7 @@ Approves a `Pending` remediation and, when Dorgu owns the write, heals the workl
     Before anything is written: the [protected-context guard](#protected-contexts), the remediation plan, **the ownership check**, the target Deployment, the container, and the patch. If any of it fails, nothing is approved. On an **owned** workload this is where the command stops: it prints the refusal and exits `4`, having written neither a Deployment patch nor a status patch.
   </Step>
   <Step title="The CLI records your decision">
-    It patches the RemediationAction status subresource to `phase: Approved`, with `approvedBy: cli-user` and the current timestamp. The write carries the `resourceVersion` the CLI read. If anything wrote to the action in between, the CLI re-reads it and retries while it is still `Pending`. "Approved" is printed only after a short settle, once the operator still has the approval standing. If the operator expired or superseded the action in that moment, the CLI says what it became and exits `1`.
+    It patches the RemediationAction status subresource to `phase: Approved`, with `approvedBy: cli-user` and the current timestamp. The write carries the `resourceVersion` the CLI read. If anything wrote to the action in between, the CLI re-reads it. A status-only write is retried on the new version. If the spec changed since you read the plan (its `generation` moved), the CLI refuses the retry and tells you to re-run `dorgu remediation diff`, because the approval would land on a plan you never saw. If someone else's approval landed first and stands (`Approved`, `Ticketed`, or `Applying` with a ticket), it says `already approved by another actor`, writes nothing, and exits `0` without healing. Run `dorgu remediation heal` to apply it. "Approved" is printed only after a short settle, once the operator still has the approval standing. If the operator expired or superseded the action in that moment, the CLI says what it became and exits `1`.
   </Step>
   <Step title="The operator re-checks the approval and writes a ticket">
     The operator runs its gate again on the live cluster: the same workload, an unedited spec, current policy, current guardrail arithmetic. If it clears, it writes `status.applyTicket` (the Deployment's UID and generation, the container, the exact patch, every verdict, and an expiry **10 minutes** out) and the phase becomes `Ticketed`. If it refuses, the action ends `Failed` with `GateRefusedAtApproval` and nothing is applied. See [the approval-time re-check](/how-dorgu-decides#the-approval-time-re-check-and-the-apply-ticket).
@@ -439,6 +439,21 @@ Approves a `Pending` remediation and, when Dorgu owns the write, heals the workl
 <Warning>
   **The CLI refuses to patch, and applies nothing, when:** no ticket arrives within 30 seconds (including against an operator older than v0.13.0, with an upgrade hint); the ticket has expired; the ticket was already on the action before you approved; the Deployment's UID is not the one the ticket names, or its `metadata.generation` has moved since; `--container` disagrees with the ticket; the cluster's self-healing mode is `observe` or cannot be read; or the live Deployment carries Helm, Argo CD or Flux stamps, a controller owner reference or a GitOps field manager, whatever the proposal recorded. It re-reads the action, the Deployment and the ClusterPersona right before it writes, after any confirmation prompt. It never falls back to patching from the plan.
 </Warning>
+
+When the action is not approved, the CLI says so and why. A proposal the operator superseded or expired is phase `Expired`, and the sentence follows the `Expired` condition's reason:
+
+```
+✗ fix-oom-api-server is NOT approved (phase Expired): the operator superseded it with a newer proposal for the same fault, which is worse than the one it answered. Run `dorgu remediation list` for the current one.
+ℹ Nothing was applied to the persona or the workload.
+```
+
+| Reason | What the CLI says |
+|--------|-------------------|
+| `Superseded` | The operator superseded it with a newer proposal for the same fault, which is worse than the one it answered. Run `dorgu remediation list` for the current one. |
+| `ApprovalTimedOut` | The operator expired it: it waited in `Pending` longer than its time-to-live. Run `dorgu remediation list`; the incident may have a fresh proposal. |
+| `PredatesGate` | It predates the operator's gate (it was made by an older operator), so it cannot be approved. The operator proposes again. See below. |
+
+An approval of a proposal that predates the gate is shown as the gate's refusal (`NoProposalRecord`, exit `4`) with a `Note:` line carrying the operator's own account, and not as "ended in phase Expired".
 
 When the operator's gate refuses the approval, the CLI shows the reason the operator persisted and exits `4`:
 

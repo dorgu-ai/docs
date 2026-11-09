@@ -94,6 +94,8 @@ New in **operator v0.13.0**. Three signals catch faults that a crash-loop detect
 | `LivenessRestarts` | A container restarted `count` times within the window, and the kubelet's own "failed liveness probe, will be restarted" `Killing` events are in that window, whatever the exit code. A liveness kill is a SIGTERM first, so an application that handles it exits `0`. | `healthCheck.livenessRestarts.count` (default `2`), `.window` (default `10m`) |
 | `RestartLoop` | The same restart count with no liveness-kill event, and an `Error` or SIGKILL exit. The cause is unknown, because an application that crashes quickly looks exactly the same. | the same two values |
 
+`RestartLoop` and `LivenessRestarts` also read a container **between runs**. A container that exits right after it starts is `Running` for a few seconds of each back-off cycle and sits in `Terminated` the rest of the time, so a detector that needed a Running container waited for CrashLoopBackOff. Reading the current termination detects it in about a minute in testing on EKS (about two minutes before). For a pod younger than the restart window (10 minutes by default) every restart happened inside the window, so its restart count is the delta on every cycle. An older pod's lifetime count only seeds the history.
+
 The restart delta is observed across cycles. After an operator restart a container is seeded on first sight, because its lifetime restart count proves nothing about the window. At least `count` kill events in the window are enough on their own.
 
 One container is one finding at a time: `CrashLoopBackOff` or a live `OOMKilled` on the container wins, and `LivenessRestarts` and `RestartLoop` win over `ReadinessNotReady`. A container whose startup probe has not passed is never reported, so an app that legitimately takes a long time to start should have a `startupProbe` or a longer threshold.
@@ -109,6 +111,8 @@ A container that was OOM-killed, and has been Running and Ready since for 2 minu
 ### One fault, one incident
 
 A fault that changes shape is **one** incident. A container that goes not Ready, is restarted by the kubelet, enters CrashLoopBackOff and is then OOM-killed opens one incident that escalates, not four. Identity is the application, the container and the family, from mildest to worst: `ReadinessNotReady`, `RestartLoop`, `LivenessRestarts`, `CrashLoopBackOff`, `OOMKilled`. A worse signal escalates the incident, a milder one while the worse is still seen is folded in, and a milder one after the worse has cleared de-escalates it. A pod replaced by a rollout still merges. Different containers, sidecars included, are different incidents.
+
+A pod whose image cannot be pulled is one incident too. It stays `Pending`, so it used to cross the long-pending threshold and open a second incident. `PodPendingLong` is no longer raised for a pod with a container waiting on `ImagePullBackOff`, `ErrImagePull` or `InvalidImageName`, and if both still show in one cycle the pending diagnosis folds into the image-error incident while that error is current.
 
 A fault that comes back after its incident resolved opens a **new** incident (`<first-name>-r<N>`) with its own first-seen time, and never folds into the resolved one. After `healthCheck.recurrence.cap` recurrences (default 3) within `healthCheck.recurrence.window` (default 24 hours) the latest incident is reopened instead and marked `Flapping`. Resolved incidents older than `healthCheck.resolvedRetention` (default 30 days) are pruned, except the newest of each fault. How a `Pending` proposal is superseded when an incident escalates is in [How Dorgu decides](/how-dorgu-decides#recurrence-escalation-and-pruning).
 
@@ -246,7 +250,7 @@ kubectl patch clusterpersona dorgu-cluster --type merge \
   -p '{"spec":{"policies":{"selfHealing":{"excludeNamespaces":["payments"]}}}}'
 ```
 
-`--reset-then-reuse-values` needs Helm 3.14 or newer. It keeps the values you set and also picks up the defaults of any value a newer chart added, which plain `--reuse-values` does not. Chart 0.13.0 needs that: see the [upgrade guide](/upgrade-guide#step-3-upgrade-the-operator).
+`--reset-then-reuse-values` needs Helm 3.14 or newer. It keeps the values you set and also picks up the defaults of any value a newer chart added, which plain `--reuse-values` does not. The [upgrade guide](/upgrade-guide#step-3-upgrade-the-operator) uses it for the 0.13.0 upgrade.
 
 The chart value belongs to whoever installs the operator; the ClusterPersona field belongs to whoever manages cluster policy. Dorgu honours the union of both.
 

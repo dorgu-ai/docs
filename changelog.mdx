@@ -10,11 +10,11 @@ This page covers the releases that change how you use Dorgu. The full history, r
 
   ## Upgrade steps
 
-  - **Upgrade the CLI to `v0.14.0` on every machine and CI job that runs `approve` or `heal`,** then apply the new CRDs, then upgrade the chart to `0.13.0`. Do not use `--reuse-values` for the chart upgrade.
+  - **Upgrade the CLI to `v0.14.0` on every machine and CI job that runs `approve` or `heal`,** then apply the new CRDs, then upgrade the chart to `0.13.0`. Both `--reuse-values` and `--reset-then-reuse-values` work.
   - **If a script calls `dorgu remediation reject --reason "some text"`,** change it. `--reason` is now one of `wrong-diagnosis`, `too-risky`, `not-now`, `duplicate`, `not-needed`, `other`, and free text goes in `--note`. **This is breaking.**
   - **If you set `websocket.*` Helm values or pass `--enable-websocket`,** remove them. The server is gone. The flags stop the operator at startup, and old values are ignored.
   - **If you manage the operator's ClusterRole yourself,** add `delete` on `incidentmemories.dorgu.io`.
-  - **Decide your `Pending` proposals before you upgrade.** One created by an older operator is refused at approval afterwards.
+  - **Decide your `Pending` proposals before you upgrade, or let them go.** One created by an older operator cannot be approved afterwards. It ends `Expired` with the reason `PredatesGate`, and the operator proposes again.
 
   ## Operator v0.13.0 and Helm chart 0.13.0
 
@@ -26,7 +26,7 @@ This page covers the releases that change how you use Dorgu. The full history, r
   - **Heal credit.** A recovery is credited to Dorgu only when the CLI patched the workload and the live values equal the ticket's. Otherwise the incident is `self-resolved` or the heal is `partial`. See [heal credit](/how-dorgu-decides#heal-credit).
   - **New signals `ReadinessNotReady`, `LivenessRestarts` and `RestartLoop`,** which catch probe failures and restart loops that raised nothing before. See [Detect](/operator/features/self-healing#probe-failures-and-restart-loops).
   - **Recurrence, escalation and pruning.** A fault that returns opens a new incident (`-r<N>`), one that changes shape is one escalating incident, a flapping fault is capped, and old resolved incidents are pruned. See [recurrence, escalation and pruning](/how-dorgu-decides#recurrence-escalation-and-pruning).
-  - **Pending proposals expire after 24 hours** (`remediation.pendingTTL`).
+  - **Pending proposals expire after 24 hours** (`remediation.pendingTTL`). The `Expired` reason is `ApprovalTimedOut`, `Superseded`, or `PredatesGate`.
   - **A complete [metrics reference](/operator/reference/metrics):** gate decisions, stage durations, tickets, heal credit, verifications, rollbacks and model use, all pre-registered at zero.
   - New flags and values: `healthCheck.readinessThreshold`, `healthCheck.livenessRestarts.count` and `.window`, `healthCheck.recurrence.cap` and `.window`, `healthCheck.resolvedRetention`, `remediation.pendingTTL`, `llm.cacheTTL`, `eventPipeline.enabled`.
 
@@ -40,11 +40,16 @@ This page covers the releases that change how you use Dorgu. The full history, r
   - **Verification fails closed.** If any collector failed, the result is `Unknown`, never `Healthy`, and an `Unknown` result is retried and then rolled back.
   - **More paths fail closed:** an unreadable rate limit, an unreadable self-healing mode, an unknown operator namespace.
   - **The ClusterRole gains `delete` on `incidentmemories.dorgu.io`,** and nothing else.
+  - **Advisory proposals survive a refused AI plan.** For a crash loop, a not-Ready container or a liveness kill, the planner's persona change is dropped and its advisory steps are proposed, with the refusal still recorded.
+  - **One bad image is one incident.** `PodPendingLong` is no longer raised for a pod stuck on an image pull error.
+  - **A container that exits right after it starts is detected in about a minute.**
+  - **The leader lease is released on shutdown,** so a rolling update no longer leaves detection without a leader for about 30 seconds.
+  - **Rollback is stated plainly.** It restores the persona only. When the workload still carries the change the outcome is `partial` and the condition carries the command that finishes the job. If the workload was never patched, `WorkloadDiverged` is `False/WorkloadRestored`.
 
   **Removed**
 
   - **The WebSocket server,** its `--enable-websocket` and `--websocket-addr` flags and the `websocket.*` chart values. It was unauthenticated and nothing used it.
-  - **The event pipeline is off by default.** Turn it on with `eventPipeline.enabled=true`.
+  - **The event pipeline is off by default.** Turn it on with `eventPipeline.enabled=true`. `dorguEvents.*` values you set do nothing until you do.
 
   ## CLI v0.14.0
 
@@ -53,17 +58,20 @@ This page covers the releases that change how you use Dorgu. The full history, r
   - [**`dorgu report`**](/cli/commands/report): a local summary of safe heals, approvals, time to heal, refusals and clamps, as text or JSON (schema `dorgu.report/v1`). It never prints a zero for something it could not measure.
   - **`remediation reject --reason` and `--note`.** The reason is recorded as a `RejectionReason` condition and counted by `dorgu report`.
   - **Every decline is recorded as an Event** on the RemediationAction. A protected kube context writes nothing to the cluster.
+  - **`remediation list` shows `Ticketed` actions by default,** and `dorgu health` prints `Awaiting approval: N` where it used to print `Pending Remediations: N`.
+  - **`dorgu report` counts an approval that was never healed as `approved_not_healed`,** not as a rollback, and its header reads `unreleased build <tag>` when the operator's image tag is not a release version.
 
   **Changed**
 
   - **`approve` waits up to 30 seconds for the apply ticket and patches exactly the ticket,** after re-reading the action, the Deployment and the cluster's self-healing mode. It refuses without a ticket, with an expired one, or on a changed Deployment. A refusal by the operator's gate exits `4`.
-  - **`approve` reports "approved" only if the approval stands.** If the operator expired or superseded the action in the moment between the CLI reading it and writing the approval, the CLI says so and exits non-zero.
+  - **`approve` reports "approved" only if the approval stands.** If the operator expired or superseded the action in the moment between the CLI reading it and writing the approval, the CLI says why (`Superseded`, `ApprovalTimedOut` or `PredatesGate`) and exits non-zero. If the spec changed since you read the plan, it refuses and asks you to re-run `diff`. If someone else's approval landed first, it says `already approved by another actor` and exits `0` without healing.
   - **`heal` no longer doubles as an approval.** Approve first. After `approve --no-heal`, `heal` works only while the action is still `Applying`.
   - **Ownership is re-detected from the live Deployment before every patch.**
   - **`reject --reason` takes a fixed list.** Breaking.
 
   **Fixed**
 
+  - `remediation diff` suggests a `reject` command that works: `--reason <wrong-diagnosis|too-risky|not-now|duplicate|not-needed|other> [--note "..."]`.
   - `--kubeconfig` help is accurate: with no flag, `kubectl` resolves the config itself and `$KUBECONFIG` wins.
   - AI-written text in `incidents describe` and `remediation diff` is rendered as plain text instead of raw markdown.
   - A protected-context refusal opens with the command you ran: `refusing to approve`, `refusing to approve and heal`, or `refusing to heal`.

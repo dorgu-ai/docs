@@ -506,9 +506,9 @@ How the CLI prints these: [guardrail verdicts](/cli/commands/remediation#guardra
 | `Applied` | Operator | `False` with `GateRefusedAtApproval` when the gate refused an approval (no cooldown), `PreconditionRejected` when the executor refused a ticket, `AdvisoryOnly` for a plan with nothing to apply. |
 | `WorkloadPatched` | CLI | The CLI patched the Deployment. Names the Deployment, container and fields. |
 | `HealCredited` | Operator | `True` only if the CLI recorded `WorkloadPatched`, the Deployment's generation moved past the ticket's, and the live container's resources equal the ticket's. `False` reasons: `NothingPatched`, `ResourcesNotTicket`, `WorkloadDiverged`, `WorkloadUnreadable`. |
-| `WorkloadDiverged` | Operator | `True` when someone else changed the workload after the ticket, or when a rollback restored the persona but the live Deployment still carries the change. The heal is `partial`. |
+| `WorkloadDiverged` | Operator | `True` when someone else changed the workload after the ticket, or when a rollback restored the persona but the live Deployment still carries the change (the condition then names each field, its value now and before, and the command that finishes the rollback). `False` with reason `WorkloadRestored` means the workload was never patched, so there was nothing left to undo. The heal is `partial`. |
 | `PersonaEditedSinceHeal` | Operator | A rollback left a persona field alone because someone changed it after the heal. Names the field. |
-| `Expired` | Operator | Reason `ApprovalTimedOut` (nobody decided in time) or `Superseded` (the incident escalated to a worse shape). |
+| `Expired` | Operator | Reason `ApprovalTimedOut` (nobody decided in time), `Superseded` (the incident escalated to a worse shape), or `PredatesGate` (the proposal was made by an operator older than v0.13.0 and cannot be approved). |
 | `RejectionReason` | CLI | Why a human rejected the proposal. Reason is one of `WrongDiagnosis`, `TooRisky`, `NotNow`, `Duplicate`, `NotNeeded`, `Other`; the message is the note. |
 
 <Note>

@@ -42,7 +42,7 @@ dorgu report -n production
 | Section | What it tells you |
 |---------|-------------------|
 | **North star: safe heals** | Clean heals whose approval-time gate run passed. A heal is **clean** only when the RemediationAction completed, `HealCredited` is `True`, and the incident outcome is `resolved`. |
-| **Heal accounting** | How every RemediationAction created in the window ended, and why each one that is not a clean heal is not one: `partial`, `self_resolved`, `heal_not_credited`, `no_credit_record`, `outcome_unconfirmed`, `rolled_back`, `failed`, `rejected`, `expired`, `acknowledged`, `refused_by_gate`, `in_flight`. Every action lands in exactly one bucket. |
+| **Heal accounting** | How every RemediationAction created in the window ended, and why each one that is not a clean heal is not one: `partial`, `self_resolved`, `heal_not_credited`, `no_credit_record`, `outcome_unconfirmed`, `rolled_back`, `approved_not_healed`, `failed`, `rejected`, `expired`, `acknowledged`, `refused_by_gate`, `in_flight`. Every action lands in exactly one bucket. `approved_not_healed` is an approval that never became a heal: it was approved with `--no-heal` (or never patched), so the workload kept its problem and the operator rolled the persona back. It is not counted as a rollback of a heal. |
 | **Active cluster, review depth, approval rate** | Whether any proposal was decided in the window, decisions per week, and approved against rejected. Below 5 decisions it prints the counts and says `too few decisions` instead of a rate. Beyond that, an approval rate under 30% reads as noisy proposals and over 80% as possible rubber-stamping. |
 | **Time to heal** | p50 and p90 for detect to proposal, proposal to decision (human time), decision to applied, and applied to verified. Detect to proposal is measured once per incident, to its first proposal. |
 | **Proposal precision** | The share of decided proposals rejected with the reason `wrong-diagnosis`, and a breakdown of every other reason. See [`remediation reject`](/cli/commands/remediation#remediation-reject). |
@@ -126,7 +126,7 @@ Not measurable from a cluster
   A8   4-week retention: needs reports from earlier weeks; one cluster's report cannot show it
   A9   Would-pay signals: comes from the conversation log
   A10  Inbound: comes from GitHub
-  Q4   Operator footprint: CPU and memory come from the operator's metrics
+  Q4   Operator footprint: not measured by this report: read the operator's CPU and memory from its own metrics ...
   Q5   Clean-room: comes from clean-room runs
 ```
 
@@ -185,6 +185,7 @@ Where there is no sample, a line reads `no data (reason)`. In the example, `Q3` 
     "no_data": false,
     "excluded": {
       "acknowledged": 0,
+      "approved_not_healed": 0,
       "expired": 0,
       "failed": 1,
       "heal_not_credited": 0,
@@ -384,6 +385,10 @@ The example shortens the long text fields and lists only two of the `not_measura
 <Warning>
   **Check `no_data` before you read a number.** `clean`, `safe_heals`, a percentile or a rate is `null` when it cannot be known, and `no_data` is `true` with a `reason`. A script that treats `null` as `0` will report a failure to read as a fact.
 </Warning>
+
+### The operator line in the header
+
+The header prints the operator version only when the operator's image tag is a release version. A commit hash, `latest` or `dev` reads `Operator:  unreleased build <tag>`, so a build identifier is never shown as if it were a version. `cluster.operator_version` in the JSON keeps the raw tag.
 
 ### Older operators
 
