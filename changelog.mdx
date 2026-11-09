@@ -5,6 +5,51 @@ description: "What changed in each Dorgu release, and what you need to do about 
 
 This page covers the releases that change how you use Dorgu. The full history, release by release, is in each repository's changelog: [CLI](https://github.com/dorgu-ai/dorgu/blob/master/CHANGELOG.md) and [operator](https://github.com/dorgu-ai/dorgu-operator/blob/master/CHANGELOG.md).
 
+<Update label="CLI v0.14.1 · operator v0.13.1" description="2026-11-09: stale proposals expire, owned workloads get advice only, and the report stops losing refusals">
+  A patch release for what the first upgrade to `v0.13.0` turned up. No CRD change, no RBAC change, and no new command, flag or Helm value. **Upgrade the CLI first,** as before. The upgrade steps are in the [upgrade guide](/upgrade-guide#what-the-patch-release-changes).
+
+  ## Upgrade steps
+
+  - **If a tool reads the `Expired` condition's reason,** handle the new `IncidentResolved`. It is terminal and applies nothing.
+  - **If a script reads `dorgu report --json`,** accept `null` in `tier_q.q6_refusal_mix.deferred_proposals`. It was `0` before.
+  - **If a dashboard reads `dorgu health --json`,** read `pendingRemediations.count` (the `Pending` proposals) and the new `pendingRemediations.approved` together, where you used the old `count` as both.
+  - **Do not rely on the registry chart attestation for 0.13.1.** See [verify what you install](/operator/installation#verify-what-you-install-build-provenance).
+
+  ## Operator v0.13.1 and Helm chart 0.13.1
+
+  **Fixed**
+
+  - **A stale `Pending` proposal no longer silences the persona.** A proposal whose incident has resolved expires with the reason `IncidentResolved` at the start of the next cycle, before anything is proposed. In one dogfood run, 25 proposals were deferred behind four stale ones. An expired proposal still counts toward the hourly rate limit, so a recurrence within the hour can be refused by `rate-limit`. Approved proposals are never touched. See [human approval](/how-dorgu-decides#human-approval).
+  - **A workload that Helm, Argo CD, Flux or kustomize owns gets advice only.** No step is auto-executable, and the persona change is now a `config-change` step. **Approving one records `Acknowledged` and changes nothing in the cluster.** Operator `v0.13.0` issued a ticket and patched the persona. See [ownership](/how-dorgu-decides#ownership).
+  - **A refused step command no longer loses the whole proposal.** Only the advisory steps whose command is not one plain `kubectl` invocation are dropped, and the rest goes through the gate again. Dorgu cuts runs of three or more words of the refused command out of the text it keeps. A paraphrased command is not caught, and a plain `kubectl` command the gate already judged is kept. See [when a printed command is refused](/how-dorgu-decides#when-a-printed-command-is-refused).
+  - **A description that reads `placeholder`, `todo`, `tbd` or `n/a`,** or is empty, is filled from the plan summary, and a step that cannot be filled is dropped.
+  - **An empty AI plan is an unusable reply.** It is asked once more, counted in `dorgu_llm_invalid_output_total{purpose="planning"}`, and remembered for 5 minutes instead of being cached as a success. See [AI setup](/operator/configuration/ai-setup#how-often-the-model-is-asked-and-what-it-may-return).
+
+  **Added**
+
+  - **`ProposalRefusalRecorded`,** a condition on the IncidentMemory that keeps a refusal after `ProposalRefused` has cleared. See [the CRD reference](/cli/architecture/crds#conditions-and-annotations).
+  - **Build provenance attestations** for the operator image, the chart archive and the chart in the registry. See [verify what you install](/operator/installation#verify-what-you-install-build-provenance). Releases before this one have none.
+  - New metric label values, at zero: the gate reason `owner-auto-step` and the cache result `unusable`. See the [metrics reference](/operator/reference/metrics).
+
+  **Documented, not changed**
+
+  - **A recurrence or an escalation keeps the name of the incident it continues.** An OOM that recurs on a crash-looping pod is still `...-crashloopbackoff-...-r1`. The name is the lineage, which the gate's dedup and the rejection cooldown depend on. The current signal is in the `Signal` column of `kubectl get incidentmemories` and the `dorgu.io/signal` label.
+
+  ## CLI v0.14.1
+
+  **Fixed**
+
+  - **`dorgu health` says what it counts.** "Awaiting approval" is the `Pending` proposals only, and `Approved, not yet applied: N` is its own line, shown when N is above zero. See [`dorgu health`](/cli/commands/health#output-sections).
+  - **`dorgu report` no longer misses refusals that happened.** It counts a refusal from the operator's `ProposalRefusalRecorded` condition, once per incident, even after the incident resolved. It needs operator `v0.13.1`. A refusal an older operator already cleared cannot be recovered. See [the report](/cli/commands/report#refusals-are-counted-after-they-clear).
+  - **`dorgu report` no longer prints `0` for deferrals it cannot know.** Text reads `not recorded on cluster objects`, and `deferred_proposals` is `null` with a `deferred_note`. See [deferrals](/cli/commands/report#deferrals-are-not-counted-here).
+  - **`approve` explains the `IncidentResolved` expiry:** the incident resolved, the advice is stale, and nothing is wrong with your approval.
+  - **A refusal that came back is dated by its latest occurrence,** so one standing now is inside the report's window.
+
+  **Added**
+
+  - **Build provenance attestations** for every release archive and `checksums.txt`. Verify with `gh attestation verify <file> --owner dorgu-ai`. See [verifying build provenance](/cli/installation#verifying-build-provenance). Releases before this one have none.
+</Update>
+
 <Update label="CLI v0.14.0 · operator v0.13.0" description="2026-11-09: approval goes through the gate again, and what is applied is a ticket">
   An approval no longer applies anything by itself. The operator re-checks it against the live cluster and issues a short-lived apply ticket, and the CLI applies exactly that ticket. The two halves are a pair: read the [upgrade guide](/upgrade-guide), and **upgrade the CLI first**, because a CLI older than `v0.14.0` ignores tickets and patches from the plan with none of the new checks. The full path is on [How Dorgu decides](/how-dorgu-decides).
 

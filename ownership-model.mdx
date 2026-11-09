@@ -295,6 +295,10 @@ To record the decision without a workload patch: dorgu remediation approve fix-o
 
 **Approval is withheld along with the patch.** The gate sits in the preflight, ahead of any write, so on an owned workload `approve` writes nothing at all: no Deployment patch and no status patch. That is deliberate. Approving is what tells the operator to patch the persona and start the verification clock, so approving a change the CLI will not apply would leave the persona at 128Mi, the workload at 32Mi, and a ten-minute verification window running over a fix that was never coming.
 
+<Note>
+  **From operator v0.13.1, a plan for an owned workload is advice only, so there is nothing to withhold.** No step of the plan is auto-executable, including the persona change, which becomes a `config-change` step that says what to set and where, and the explanation says all of it is advisory. Approving such an action records the decision as `Acknowledged` and **changes nothing in the cluster**: not the Deployment, and not the `ApplicationPersona`. Operator v0.13.0 issued a ticket and patched the persona for an owned workload. A `Pending` proposal that v0.13.0 made keeps its old plan on the object, and approving it now acknowledges it the same way. The `approve` behaviour above still applies to such an old plan, and to any proposal where ownership is read from the live Deployment as owned.
+</Note>
+
 ## Exit code 4: declined by design
 
 A refusal exits **`4`** (`ExitDeclined`), not `1`.
@@ -319,7 +323,7 @@ The command ran, the plan was understood, and the decision was not to write. A s
 dorgu remediation approve fix-oom-frontend -n apps --no-heal
 ```
 
-It records `phase: Approved` on the `RemediationAction`, lets the operator patch the `ApplicationPersona` spec, and skips the Deployment patch entirely. Exit code `0`.
+It records `phase: Approved` on the `RemediationAction`, lets the operator patch the `ApplicationPersona` spec, and skips the Deployment patch entirely. Exit code `0`. This is the behaviour for a plan with a persona change to apply, such as an unmanaged workload's. For an owned workload on operator v0.13.1 or newer, the plan has no auto-executable step, and approving it records `Acknowledged` and changes nothing, `--no-heal` or not.
 
 <Note>
   The CLI warns that the persona and the running workload will disagree until you apply the change at the source. That warning is accurate and worth heeding: the operator's verification window will run against a workload that has not changed yet.
@@ -348,7 +352,7 @@ Ownership governs one thing: the CLI patching your Deployment. Everything else i
 
 | Write | Actor | Gated on ownership? |
 |-------|-------|---------------------|
-| `persona-update` step patches the `ApplicationPersona` spec | Operator | **No.** Always safe, and `autoExecutable` semantics are unchanged. |
+| `persona-update` step patches the `ApplicationPersona` spec | Operator | **No.** Always safe, and `autoExecutable` semantics are unchanged. From operator v0.13.1 an owned workload gets no such step: its persona change is advice, and approving it changes nothing. |
 | `RemediationAction` / `IncidentMemory` / `DorguEvent` records | Operator | **No.** These are Dorgu's own CRDs. |
 | Deployment patch on approval or heal | CLI, with **your** credentials | **Yes.** Only `managedBy: unmanaged` permits it. |
 

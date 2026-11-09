@@ -387,7 +387,7 @@ Actions:
   dorgu remediation reject fix-image-web -n demo --reason <wrong-diagnosis|too-risky|not-now|duplicate|not-needed|other> [--note "..."]
 ```
 
-Approving one anyway is safe: it records the approval, changes nothing, and settles the action as `Acknowledged`. It used to be offered `approve` as its suggested next action, and following that advice failed the remediation and put the app into a 30-minute cooldown.
+Approving one anyway is safe: it records the approval, changes nothing, and settles the action as `Acknowledged`. Every plan for a workload that Helm, Argo CD, Flux or kustomize owns is of this kind from operator v0.13.1: it is advisory only, and approving it changes nothing in the cluster, not the workload and not the `ApplicationPersona`. It used to be offered `approve` as its suggested next action, and following that advice failed the remediation and put the app into a 30-minute cooldown.
 
 | Part | Values | Meaning |
 |------|--------|---------|

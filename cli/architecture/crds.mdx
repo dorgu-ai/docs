@@ -298,7 +298,8 @@ The ClusterPersona controller reconciles every 5 minutes, scanning nodes, namesp
 
 | Record | Meaning |
 |--------|---------|
-| Condition `ProposalRefused` | `True` with reason `<Stage>_<Reason>` (for example `ModePolicy_SelfHealingMode`) when the gate refused a proposal for this incident. There is no RemediationAction to carry it, so it lives here. `False` with `ProposalMade`, `ProposalDeferred` or `IncidentResolved` once a later proposal, a deferral or the resolution answers it. |
+| Condition `ProposalRefused` | The live state. `True` with reason `<Stage>_<Reason>` (for example `ModePolicy_SelfHealingMode`) when the gate refused a proposal for this incident. There is no RemediationAction to carry it, so it lives here. `False` with `ProposalMade`, `ProposalDeferred` or `IncidentResolved` once a later proposal, a deferral or the resolution answers it. |
+| Condition `ProposalRefusalRecorded` | **New in operator v0.13.1.** `True`, with the same `<Stage>_<Reason>` reason as `ProposalRefused`, the time of the **latest** refusal, and a fixed message with no plan text. Nothing clears it, so the refusal survives the incident resolving or a later proposal answering it. An incident carries one, for its latest reason. A deferral is not a refusal and leaves none. It is a standard condition, with no schema change. [`dorgu report`](/cli/commands/report#refusals-are-counted-after-they-clear) reads it from CLI v0.14.1. |
 | Condition `Recurring` | `True`, reason `RecurrenceOfResolvedIncident`, on an incident opened because a fault came back after an earlier one resolved. |
 | Condition `Flapping` | The recurrence cap was reached, so the latest incident was reopened instead of a new one created. |
 | Annotations `dorgu.io/recurrence-of`, `dorgu.io/recurrence-count` | The incident this one recurs, and how many earlier incidents the fault has had. Recurrences are named `<first-name>-r<N>`. |

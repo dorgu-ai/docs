@@ -5,7 +5,7 @@ description: "Every Prometheus metric the Dorgu operator exports: gate decisions
 
 The operator exports Prometheus metrics on its metrics endpoint. This page lists every `dorgu_*` family, its labels, and what it answers. Metrics are a dashboard view. For a one-off summary that anyone can paste into an issue, use [`dorgu report`](/cli/commands/report), which reads the cluster's resources instead of `/metrics`.
 
-The set below is **operator `v0.13.0`**. `dorgu_incidents_total`, `dorgu_proposals_total` and `dorgu_remediation_transitions_total` exist from `v0.12.0`. Everything else is new in `v0.13.0`.
+The set below is **operator `v0.13.1`**. `dorgu_incidents_total`, `dorgu_proposals_total` and `dorgu_remediation_transitions_total` exist from `v0.12.0`. Everything else is new in `v0.13.0`, apart from the two label values `v0.13.1` pre-registers at zero: the gate reason `owner-auto-step` and the cache result `unusable`.
 
 ## Scraping
 
@@ -32,7 +32,7 @@ Every label value comes from a fixed set. None is ever an object name, a namespa
 | `phase` | `Proposal`, `ApprovalRecheck`, `Apply` |
 | `stage` | The stage that refused: `Validate`, `Ground`, `Ownership`, `Guardrails`, `ModePolicy`, `DedupCooldown`, or `Ticket` (the apply-time ticket check). `complete` when the run did not refuse. |
 | `result` | `pass`, `clamp` (the plan was narrowed and may proceed), `refuse`, `deferred` (an outstanding proposal answers this incident), `error` (the gate could not decide, so nothing proceeded) |
-| `reason` | The refusing guardrail, such as `blast-radius`, `deny-list`, `rate-limit`, `concurrent`, `self-healing-mode`, `workload-gone`, `ticket-expired`; `none` for a pass; `gate-error` for an error |
+| `reason` | The refusing guardrail, such as `blast-radius`, `deny-list`, `rate-limit`, `concurrent`, `self-healing-mode`, `workload-gone`, `ticket-expired`, and, from operator v0.13.1, `owner-auto-step` (stage `Ownership`: a final proposal still carried an auto-executable step for an owned workload, which is a bug in Dorgu and is refused); `none` for a pass; `gate-error` for an error |
 
 The same refusal is also a condition and an Event. See [refusals are recorded](/how-dorgu-decides#refusals-are-recorded). Metric reasons are the kebab-case guardrail names. The condition reasons are the same names in CamelCase (`blast-radius` is `BlastRadius`).
 
@@ -105,8 +105,8 @@ histogram_quantile(0.9, sum by (le) (rate(dorgu_stage_duration_seconds_bucket{st
 | `dorgu_llm_requests_total` | counter | `provider`, `purpose`, `outcome` | Requests sent to the provider. `purpose` is `diagnosis` or `planning`. `outcome` is `success` or `error`. |
 | `dorgu_llm_tokens_total` | counter | `provider`, `purpose`, `kind` | Tokens the provider reported, `kind` is `input` or `output` |
 | `dorgu_llm_request_duration_seconds` | histogram | `provider`, `purpose` | Request latency, 250 ms to 64 s |
-| `dorgu_llm_invalid_output_total` | counter | `provider`, `purpose` | Replies that failed schema validation and were replaced by the rule-based result |
-| `dorgu_llm_cache_total` | counter | `purpose`, `result` | Model calls avoided (`hit`) or made (`miss`) by the signal-fingerprint cache |
+| `dorgu_llm_invalid_output_total` | counter | `provider`, `purpose` | Replies that failed schema validation and were replaced by the rule-based result. From operator v0.13.1, `purpose="planning"` also counts a planner reply with an empty `steps` list, and one that does not parse. |
+| `dorgu_llm_cache_total` | counter | `purpose`, `result` | Model calls avoided (`hit`) or made (`miss`) by the signal-fingerprint cache. `unusable` (operator v0.13.1) counts a model that answered with an empty plan a second time for the same unchanged situation, which is then remembered for the full `llm.cacheTTL`. |
 | `dorgu_model_claims_stripped_total` | counter | `kind` | Claims the operator removed from model text: `fabricated_clamp` (a sentence claiming a guardrail clamp no recorded verdict supports) or `refused_value` (a value a guardrail refused) |
 
 `provider` is `claude` or `gemini`. With AI off, these stay at zero.

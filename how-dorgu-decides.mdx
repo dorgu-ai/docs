@@ -5,7 +5,7 @@ description: "The path from a failing pod to a change on your cluster: what Dorg
 
 Dorgu detects a failure, diagnoses it, and proposes a fix. A human approves. Only then does anything change, and Dorgu itself writes to your workload only when nothing else owns it.
 
-This page follows one proposal from the first signal to the verified result, and names every point where Dorgu can say no. It describes operator `v0.13.0` with CLI `v0.14.0`. If you run older versions, read the [upgrade guide](/upgrade-guide) first, because the approval-time checks below do not exist before them.
+This page follows one proposal from the first signal to the verified result, and names every point where Dorgu can say no. It describes operator `v0.13.1` with CLI `v0.14.1`. If you run older versions, read the [upgrade guide](/upgrade-guide) first, because the approval-time checks below do not exist before them.
 
 <Note>
   **What this page claims, and what it does not.** Dorgu does not heal a cluster on its own. It proposes, you decide, and the checks on this page narrow or refuse a change. They do not make a change correct. The [limits](#limits) section lists what the checks cannot see.
@@ -25,7 +25,7 @@ flowchart TD
     DD -->|"cleared"| PE["RemediationAction: Pending"]
     DD -.->|"refused"| RF["Recorded: condition, Event, metric"]
     DD -.->|"outstanding proposal"| DF["Deferred: nothing new is written"]
-    PE -->|"24 hours, no decision"| EX["Expired"]
+    PE -->|"24 hours, no decision, or the incident resolves"| EX["Expired"]
     PE --> HU["A human approves"]
     HU --> RC["Approval re-check<br/>the gate runs again on the live cluster"]
     RC -.->|"refused"| FA["Failed: nothing applied"]
@@ -50,6 +50,8 @@ Diagnosis is structured, and the two providers have different jobs:
 
 The practical effect: text written by a model never selects an action, a patch, or a phase. A model can make a root cause read better. It cannot make a proposal bigger or different.
 
+**An empty AI plan is an unusable reply.** With the AI planner on, a plan whose `steps` list is empty is not accepted. From operator `v0.13.1` the model is asked once more, the reply is counted in `dorgu_llm_invalid_output_total{purpose="planning"}` (which now also counts a planner reply that does not parse), and the failure is remembered for 5 minutes instead of being cached as a success for `llm.cacheTTL`. The prompt now asks for at least one step, a manual one if nothing else applies. If the model answers empty again for the same unchanged situation, that is remembered for the full `llm.cacheTTL` (counted as `dorgu_llm_cache_total{result="unusable"}`), so the worst case is 2 model calls per 30 minutes for that situation, not 2 per 5. The rule-based plan stands meanwhile. The operator logs no model reply, so why a model answers "nothing to do" to a schema that asks for steps could not be confirmed.
+
 ## The gate: six stages
 
 At proposal, a candidate plan (from the rule engine or the optional AI planner) passes the stages in order. The first refusal ends the run. Each stage reads the live cluster itself rather than trusting the plan or the persona.
@@ -63,6 +65,19 @@ At proposal, a candidate plan (from the rule engine or the optional AI planner) 
 | **Mode policy** | The cluster's `selfHealing.mode` | `observe` mode (detect and diagnose, propose nothing), a mode that cannot be read, a mode Dorgu does not recognize. `auto-approve` is not implemented and is treated as `propose`. Every fix needs a human. |
 | **Dedup and cooldown** | Whether a proposal is redundant or was already declined | A recent rejection of the same fix for the same incident (1 hour). An outstanding proposal is a [deferral](#deferral-and-refusal), not a refusal. |
 
+### When a printed command is refused
+
+An advisory step can carry a ready-to-run `kubectl` command for you to run by hand. Validate refuses a command that is not one plain `kubectl` invocation (`Validate/step-command`). Before operator `v0.13.1` that refusal threw away the whole proposal. Now **only the advisory steps whose command was refused are dropped**, and everything that is left goes through the whole gate again, and then the seal that records what was cleared. A remainder with no steps is refused, as before.
+
+Dorgu also removes what the refused command left behind in the text you will read. After normalizing (lower case, quote characters, backticks and backslashes removed so a shell line continuation joins, punctuation trimmed, whitespace collapsed), it searches every kept description, rationale and non-plain command for any run of **at least three consecutive words of the refused command**: the whole command, its tail, a re-quoted copy, a copy with no-break spaces. Each run found is cut out. The plan summary and explanation are no longer the model's: Dorgu writes them, and they say what was left out and which steps were kept. The proposal is refused if such a run is still in any string of the plan, or spread across the kept fields in order (a command split between two fields).
+
+Two other things change in what you read. A kept step that pointed at another step by number or position ("after step 2", "the step above") now says "a step of the original plan", because the steps were renumbered. And when two narrowings chain (a persona change dropped, then a command), each refusal is recorded once, in order: an Event per refusal, the incident's `ProposalRefusalRecorded` ending on the latest, and the gate metric counts each.
+
+**What this does not guarantee.** These limits are real:
+
+- **A paraphrased command is not caught.** A command put in different words, or described in prose ("delete the data directory"), is advice text like any other, which the gate does not read. That was always true.
+- **A plain `kubectl` command that the gate already judged is kept as it is.** A command that passes the plain-kubectl check is the gate's to judge, and the text search above does not touch it.
+
 The rate limit, the namespace deny-list, concurrency and the cooldowns are evaluated **before** the AI planner is asked, so a persona that would be refused does not cost a model call.
 
 Every unreadable input fails closed. If Dorgu cannot read the ClusterPersona (the rate limit, the mode, the deny-list), cannot learn its own namespace, or cannot read the Deployment list, it refuses instead of assuming a default.
@@ -72,6 +87,11 @@ Every unreadable input fails closed. If Dorgu cannot read the ClusterPersona (th
 A cleared proposal becomes a `RemediationAction` in phase `Pending`. Read it with [`dorgu remediation diff`](/cli/commands/remediation#remediation-diff): the live values, each guardrail's verdict in Dorgu's own arithmetic, and the owner of the workload.
 
 You then [approve](/cli/commands/remediation#remediation-approve) or [reject](/cli/commands/remediation#remediation-reject). A proposal nobody decides within 24 hours (`remediation.pendingTTL`) becomes `Expired`: terminal, nothing applied, no cooldown, and Dorgu may propose again if the problem persists.
+
+**A `Pending` proposal also expires when its incident resolves.** If the application recovers by itself, or the health cycle resolves the incident, the operator expires the proposal at the start of the next cycle, before anything new is proposed, with the reason `IncidentResolved` (alongside `ApprovalTimedOut`, `Superseded` and `PredatesGate`). It is terminal, applies nothing, is not a rejection and starts no cooldown. Stale proposals used to sit in front of the persona and silence it: in one dogfood run, 25 proposals were deferred behind four of them. If the same fault comes back, the normal proposal path runs in that cycle. Two things to know:
+
+- An expired proposal still counts toward the hourly rate limit like any proposal created in the last hour, so **a recurrence within the hour can be refused by `rate-limit`**, for example for a persona with a low `maxRemediationsPerHour`.
+- A proposal a human has approved (`Approved`, `Ticketed`, `Applying`, `Verifying`) is never touched. If your approval loses to this sweep, `dorgu remediation approve` tells you the incident resolved and the advice is stale, and that nothing is wrong with your approval.
 
 Only an action the operator itself proposed can be approved. An action created by hand, by an agent, or by an older operator has no operator-written proposal record and is refused at approval. One made by an older operator ends `Expired` with the reason `PredatesGate`, and the operator proposes again.
 
@@ -121,11 +141,11 @@ Every refusal is persisted in three places, so you can see it without reading lo
 
 | Where | What |
 |-------|------|
-| **A status condition** | At proposal there is no `RemediationAction` yet, so the refusal is a `ProposalRefused` condition on the **IncidentMemory**, with reason `<Stage>_<Reason>` such as `ModePolicy_SelfHealingMode`. At approval and apply, it is a `GateRefused` condition on the RemediationAction. |
+| **A status condition** | At proposal there is no `RemediationAction` yet, so the refusal is a `ProposalRefused` condition on the **IncidentMemory**, with reason `<Stage>_<Reason>` such as `ModePolicy_SelfHealingMode`. `ProposalRefused` is the live state: it is rewritten to `False` when the incident resolves or when a later proposal answers it. From operator `v0.13.1` the same refusal is **also** written as `ProposalRefusalRecorded` (status `True`, the same reason, the time of the latest refusal, and a fixed message with no plan text), which nothing clears. An incident carries one, for its latest reason, and a deferral leaves none. At approval and apply, it is a `GateRefused` condition on the RemediationAction. |
 | **A Kubernetes Event** | `Dorgu<Stage>Refused` (`DorguGroundRefused`, `DorguGuardrailsRefused`, `DorguModePolicyRefused`, `DorguTicketRefused`, and so on). Seen with `kubectl describe`. |
 | **A metric** | `dorgu_gate_decisions_total{phase,stage,result,reason}`. See the [metrics reference](/operator/reference/metrics). |
 
-A refusal that repeats every 60 seconds is written and emitted once. When the CLI declines (an owned workload, no usable ticket, an expired ticket, a mismatch), it writes a Warning Event on the RemediationAction too. The one exception is the [protected-context guard](/cli/commands/remediation#protected-contexts): it exists so the CLI writes nothing to a cluster you marked as production, so it declines locally and records nothing.
+A refusal that repeats every 60 seconds is written and emitted once. [`dorgu report`](/cli/commands/report#refusals-are-counted-after-they-clear) counts a refusal from `ProposalRefusalRecorded`, so it is still there after the incident has resolved. A refusal an older operator already cleared cannot be recovered. When the CLI declines (an owned workload, no usable ticket, an expired ticket, a mismatch), it writes a Warning Event on the RemediationAction too. The one exception is the [protected-context guard](/cli/commands/remediation#protected-contexts): it exists so the CLI writes nothing to a cluster you marked as production, so it declines locally and records nothing.
 
 ### Deferral and refusal
 
@@ -153,8 +173,10 @@ Whether Dorgu may write to a workload depends on who reconciles it.
 | Owner | What Dorgu does |
 |-------|-----------------|
 | `unmanaged` (nothing Dorgu can see reconciles it) | Proposes. After approval, the operator writes the persona and the CLI patches the Deployment. |
-| Helm, Argo CD, Flux, Kustomize | Detects, diagnoses and proposes **advisory steps shaped for the owner**: the Helm value to set, the Git path to edit. It never patches the Deployment, and the CLI refuses with exit code `4` if asked. |
+| Helm, Argo CD, Flux, Kustomize | Detects, diagnoses and proposes **advisory steps only**, shaped for the owner: the Helm value to set, the Git path to edit. No step of the plan is auto-executable, including the persona change, which becomes a `config-change` step that says what to set and where. It never patches the Deployment, and the CLI refuses with exit code `4` if asked. |
 | `unknown` | Treated as owned. Not being able to tell who owns a workload is not evidence that it is safe to write. |
+
+**Approving advice for an owned workload changes nothing in the cluster.** From operator `v0.13.1` the approval is recorded as `Acknowledged`: not the Deployment, and not the `ApplicationPersona` either. Operator `v0.13.0` issued a ticket and patched the persona for such a workload, which left the persona and the workload disagreeing. A `Pending` proposal that `v0.13.0` made keeps its old plan on the object, because the spec is not rewritten, and approving it now acknowledges it the same way. A ticket already issued for one is refused at apply. Where ownership is unknown or cannot be resolved, nothing changes: with no evidence of a deployer, the persona proposal stands. If a proposal reaches the final check with an auto-executable step on an owned workload, that is a bug in Dorgu, and it is refused (`Ownership/owner-auto-step`).
 
 The CLI re-detects ownership from the live Deployment before every patch, and does not rely on the owner recorded in the proposal. A Deployment with a Helm, Argo CD or Flux stamp, a controller owner reference, or a GitOps field manager is refused whatever the record says. Detail and failure modes: [the ownership model](/ownership-model).
 
@@ -170,6 +192,7 @@ The checks above are real and also bounded. These are the gaps you should know a
 - **CPU throttling is not detected.** A container throttled for most of its CPU periods raises nothing, because the operator reads no cAdvisor or Prometheus data. Detecting it is planned.
 - **A liveness kill that exits 0 is detected only through kubelet events.** If the events have aged out (about an hour) or cannot be read, such a container is not reported. An `Error` or SIGKILL exit still is, as a `RestartLoop`.
 - **A cached AI summary can be up to `llm.cacheTTL` old.** While the signals are unchanged the incident shows the model's first answer. The authoritative occurrence count is `status.occurrenceCount`.
+- **A refused command's words are removed, not understood.** Dorgu cuts runs of three or more words of a refused command out of the text it keeps. A command paraphrased in different words, or described in prose, passes through as advice text, and a plain `kubectl` command the gate already judged is kept as it is. See [when a printed command is refused](#when-a-printed-command-is-refused).
 - **Only CPU and memory requests and limits are applied.** Every other step (restart, scale, config change, manual) is advice that a person or your pipeline carries out.
 - **Rollback restores the persona, not the Deployment.** See [apply, verification and rollback](#apply-verification-and-rollback).
 - **Detection takes time.** The loop runs every 60 seconds by default, and verification waits 10 minutes. Your pod can recover within seconds of an approval while the action stays open.
