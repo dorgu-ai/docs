@@ -30,7 +30,7 @@ Import never modifies a workload. The personas can equally be committed to Git a
 
 ## Detect, propose, approve, heal
 
-This is the self-healing loop end to end. The Operator never writes the Deployment; the CLI does, as you, after you approve.
+This is the self-healing loop end to end. The Operator never writes the Deployment; the CLI does, as you, after you approve and after the operator's gate has cleared the approval on the live cluster. What the CLI writes is the operator's apply ticket and nothing else. The stages the gate runs, and what each refuses, are in [How Dorgu decides](/how-dorgu-decides).
 
 ```mermaid
 sequenceDiagram
@@ -49,9 +49,16 @@ sequenceDiagram
     Dev->>CLI: dorgu remediation approve <name>
     CLI->>CLI: Preflight: protected context, ownership, target Deployment
     CLI->>K8s: Patch RemediationAction status to Approved
-    Op->>K8s: Patch ApplicationPersona spec
-    CLI->>K8s: Patch Deployment with your credentials
-    CLI->>K8s: Record WorkloadPatched on the RemediationAction
+    Op->>K8s: Re-run the gate on the live cluster
+    alt Gate clears
+        Op->>K8s: Write status.applyTicket (phase Ticketed, valid 10 minutes)
+        Op->>K8s: Patch ApplicationPersona spec from the ticket
+        CLI->>K8s: Read the ticket (waits up to 30 seconds)
+        CLI->>K8s: Patch Deployment with exactly the ticket, with your credentials
+        CLI->>K8s: Record WorkloadPatched on the RemediationAction
+    else Gate refuses
+        Op->>K8s: Phase Failed, GateRefusedAtApproval, nothing applied
+    end
     Op->>K8s: After the verification window, re-check health
     alt Healthy
         Op->>K8s: Phase Completed, incident resolved

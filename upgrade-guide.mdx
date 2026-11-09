@@ -1,0 +1,209 @@
+---
+title: "Upgrade to operator v0.13.0 and CLI v0.14.0"
+description: "The order to upgrade in, what breaks, what changes behavior, and the new flags, Helm values and permissions"
+---
+
+Operator `v0.13.0` (Helm chart `0.13.0`) and CLI `v0.14.0` are one release in two parts. They add the [approval-time re-check and the apply ticket](/how-dorgu-decides#the-approval-time-re-check-and-the-apply-ticket), and the two halves have to be upgraded together, in a fixed order.
+
+<Warning>
+  **Upgrade the CLI first, then the operator.** A CLI older than `v0.14.0` does not know about apply tickets. It reads `spec.steps[]` and patches the Deployment from the plan without waiting for the operator's clearance. The operator cannot stop it, because the operator has no write verbs on Deployments. Between the two upgrades, do not run `approve` or `heal` with an older CLI against the new operator: none of the new checks apply to that patch.
+
+  Also upgrade the CLI wherever else it runs, such as your teammates' machines and CI jobs. Any machine still on an older CLI bypasses the ticket.
+</Warning>
+
+## At a glance
+
+| You must | Why |
+|----------|-----|
+| Upgrade the CLI to `v0.14.0` on every machine that runs `approve` or `heal` | An older CLI ignores tickets |
+| Apply the new CRDs before the operator starts | `status.applyTicket`, the `Ticketed` phase, and new conditions. Helm does not upgrade CRDs |
+| Pass `--version 0.13.0` | Otherwise Helm installs the newest chart, which may not be the one you tested |
+| Change any script that calls `remediation reject --reason "free text"` | **Breaking:** `--reason` is now a fixed list |
+| Decide your `Pending` proposals first | An action proposed by an older operator cannot be approved afterwards |
+
+A CLI `v0.14.0` against an older operator is safe but limited. `approve` records the decision, waits up to 30 seconds, finds no ticket, patches nothing, and says so. An older operator still patches the ApplicationPersona when it sees the approval, so the persona changes while the CLI refuses to patch the workload, and the two disagree until you upgrade the operator (or revert the persona by hand). If you must stay on an older operator, stay on an older CLI.
+
+## Before you upgrade
+
+1. **Decide the proposals that are waiting, or let them go.** An action created by an older operator carries no operator-written proposal record, so after the upgrade it cannot be approved. Approving one is refused (`NoProposalRecord`, CLI exit `4`) and the action ends `Expired` with the condition reason `PredatesGate`. That is terminal and starts no cooldown, and the operator proposes again on the next cycle. Approve or reject what is `Pending` now with your current CLI if you want a say first. You can also delete the old ones (`kubectl delete remediationactions -A --all`, or only the `Pending` ones) or leave them to expire.
+
+   ```bash
+   dorgu remediation list
+   ```
+
+2. **Let in-flight remediations finish.** An action that is `Applying` or `Verifying` when the operator upgrades has no ticket. It completes normally, but a rollback of one is refused and ends `Failed` with a message that the change is still applied.
+
+3. **Check your values files** for `websocket.*` (ignored, harmless) and for anything you set on `dorguEvents.*` (see [the event pipeline](#the-event-pipeline-is-off-by-default)).
+
+4. **Check who manages the operator's role.** If your GitOps tooling pins the ClusterRole instead of taking it from the chart, add the new `delete` rule on `incidentmemories` (see [new permission](#new-permission)).
+
+## Step 1: upgrade the CLI
+
+Install `v0.14.0` using the [installation page](/cli/installation), then check it:
+
+```bash
+dorgu version
+# dorgu version v0.14.0
+```
+
+## Step 2: apply the CRDs
+
+Helm installs CRDs once and never upgrades them. Pull the chart and apply its `crds/` directory yourself:
+
+```bash
+helm pull oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  --version 0.13.0 --untar --untardir /tmp/dorgu-chart
+kubectl apply -f /tmp/dorgu-chart/dorgu-operator/crds/
+```
+
+The changes are additive: `status.gate` and `status.applyTicket` on `RemediationAction`, the `Ticketed` phase, the `self-resolved` incident outcome, and a DNS-1123 label pattern (63 characters at most) on the ClusterPersona's `excludeNamespaces` items. An existing `excludeNamespaces` entry such as `Shop` or `*` never matched anything, and the object is rejected on its next update until you fix the entry.
+
+## Step 3: upgrade the operator
+
+```bash
+helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
+  --version 0.13.0 \
+  --namespace dorgu-system \
+  --reset-then-reuse-values
+```
+
+<Note>
+  **`--reuse-values` also works from 0.12.x.** Helm's `--reuse-values` ignores the new chart's defaults, so chart `0.13.0` reads every key added since 0.12.1 (`healthCheck.readinessThreshold`, `healthCheck.livenessRestarts.*`, `healthCheck.recurrence.*`, `healthCheck.resolvedRetention`, `remediation.pendingTTL`, `eventPipeline.enabled`, `llm.cacheTTL`) with a built-in default. `--reset-then-reuse-values` (Helm 3.14 or newer) keeps your values and picks up the new defaults from the chart, which is why this guide uses it. Either way, apply the CRDs first.
+</Note>
+
+## Step 4: verify
+
+```bash
+kubectl -n dorgu-system rollout status deploy/dorgu-operator
+kubectl -n dorgu-system get deploy dorgu-operator \
+  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'          # ...:0.13.0
+kubectl auth can-i delete incidentmemories.dorgu.io \
+  --as=system:serviceaccount:dorgu-system:dorgu-operator -A             # yes
+kubectl auth can-i delete deployments \
+  --as=system:serviceaccount:dorgu-system:dorgu-operator -A             # no
+dorgu report --since 1h
+```
+
+The last `can-i` must still say `no`. `dorgu report` should print `Operator: v0.13.0`.
+
+## What breaks
+
+### `remediation reject --reason` takes a fixed list
+
+`--reason` is now one of `wrong-diagnosis`, `too-risky`, `not-now`, `duplicate`, `not-needed`, `other`. Free text is an error that lists the valid values. Put the sentence in the new `--note` flag. `--reason other` requires one. Leaving `--reason` out still rejects.
+
+```bash
+# Before (now an error)
+dorgu remediation reject fix-oom-api -n production --reason "handling in the 1.4 release instead"
+
+# After
+dorgu remediation reject fix-oom-api -n production --reason not-now --note "handling in the 1.4 release"
+```
+
+The reason is recorded on the RemediationAction as a `RejectionReason` condition. See [`remediation reject`](/cli/commands/remediation#remediation-reject).
+
+### `approve` and `heal` work differently
+
+- **`approve` waits for the ticket.** It records the approval, waits up to 30 seconds for the operator's apply ticket, and patches exactly what the ticket says. A script that parsed the old output of `approve`, or that gave it a shorter timeout, needs a look.
+- **A refusal by the operator's gate exits `4`** and prints the reason. Exit `4` already means "declined by design" for owned workloads. A wrapper that treats every non-zero exit as breakage will misreport it.
+- **No ticket exits `1`** and patches nothing: the operator is older than `v0.13.0`, the ticket did not arrive in 30 seconds, or it expired.
+- **`approve` reports "approved" only if the approval stands.** If the operator expired or superseded the action in the moment between the CLI reading it and writing the approval, the CLI says what it became and exits non-zero.
+- **`heal` no longer doubles as an approval.** Healing a `Pending` remediation is refused: approve it first. After `approve --no-heal`, `heal` works only while the operator still has the action `Applying`, which is its 10 minute verification window.
+- **The CLI re-detects ownership from the live Deployment before every patch,** and refuses one that carries Helm, Argo CD or Flux stamps, kustomize build metadata, a controller owner reference or a GitOps field manager, whatever the proposal says.
+- **Every decline writes a Warning Event** on the RemediationAction (`DorguCLIDeclined`, `DorguCLINoTicket`, `DorguCLITicketExpired`, `DorguCLITicketMismatch`), so the CLI needs permission to create Events in the remediation's namespace. A protected kube context writes nothing.
+
+See [`dorgu remediation`](/cli/commands/remediation).
+
+### The WebSocket server is removed
+
+`--enable-websocket` and `--websocket-addr` are gone: passing either now stops the operator at startup with `flag provided but not defined`. The Helm values `websocket.enabled`, `websocket.port`, `websocket.service.type` and `websocket.service.port`, the `<release>-websocket` Service and the container port are gone too. The server was unauthenticated and nothing used it.
+
+Old values files still install: Helm ignores unknown keys, so `--set websocket.enabled=true` is a harmless no-op. If you ran `kubectl port-forward svc/<release>-websocket`, it has nothing to forward to. Follow changes with `kubectl get incidentmemories,remediationactions -A -w`.
+
+## What is deprecated
+
+**`spec.action` on a `RemediationAction` is a notification only.** `spec.steps[]` is the only plan. The operator now writes `spec.action` as `{type: notification}` with no `patch` and no `prePatchState`, and applies `status.applyTicket`, never `spec.action`. An edit to the spec after the operator proposed the action refuses the approval. Anything that read `spec.action.patch` should read `spec.steps[]`, or `status.gate`, which records what the gate read and decided. `spec.workloadRef`, `spec.steps[].safety` and `spec.action.prePatchState` are still written for one more release; where they disagree with `status.gate`, trust `status.gate`.
+
+## New phases and records
+
+| What | Meaning |
+|------|---------|
+| Phase **`Ticketed`** | Approval passed the re-check and the operator wrote `status.applyTicket`. It is normally visible only as a condition, because the operator applies the ticket in the same reconcile. A client that watches for `Approved` then `Applying` should accept `Ticketed` in between. |
+| Phase **`Expired`** | Now also reached by a `Pending` proposal older than 24 hours, or one superseded by a worse incident. The `Expired` condition reason is `ApprovalTimedOut`, `Superseded`, or `PredatesGate` (a proposal made by an operator older than v0.13.0, which cannot be approved). |
+| `Applied=False`, reason **`GateRefusedAtApproval`** | The gate refused at approval. The refusing guardrail is the reason of a `GateRefused` condition. No cooldown starts. |
+| Conditions **`Proposed`**, **`Ticketed`**, **`HealCredited`**, **`WorkloadDiverged`**, **`PersonaEditedSinceHeal`**, **`RejectionReason`** | The record of what the gate cleared, what was ticketed, whether the heal is credited, and so on. |
+| IncidentMemory condition **`ProposalRefused`** | A proposal-time refusal, reason `<Stage>_<Reason>`. |
+| IncidentMemory conditions **`Recurring`**, **`Flapping`** | A fault that came back, and one capped by the recurrence limit. |
+| Incident outcome **`self-resolved`** | Verification passed but Dorgu patched nothing. It is not counted as a Dorgu heal. Count `resolved` and `self-resolved` separately. |
+| `GateRefused` reason **`SelfHealingMode`** | Now means observe mode only. An unreadable mode is `PolicyUnreadable`, an unrecognized one `UnknownMode`, an expired ticket `TicketExpired`, an action that is not `Ticketed` `NotTicketed`, an unreadable cluster `ClusterUnreadable`. **Update any alert keyed on `SelfHealingMode` or `ApplyTicket`.** |
+
+The full set of reasons and where each is recorded is in [How Dorgu decides](/how-dorgu-decides#refusals-are-recorded).
+
+## Behavior that changes without a flag
+
+- **Approval goes through the gate again, on the live cluster.** A cluster that went to `observe`, a namespace that became protected, a workload that was replaced, or an edited spec each refuse the approval. This is the intended change.
+- **A recovery with nothing patched is `self-resolved`,** not `resolved`.
+- **Rollback never overwrites a later edit,** and a rollback that restored the persona but not the live Deployment is `partial`.
+- **New incidents will appear.** Faults that raised nothing before now do: see [the new signals](#new-health-signals).
+- **One OOM is one incident,** not a `CrashLoopBackOff` and an `OOMKilled`. An existing open `CrashLoopBackOff` incident for an OOM-ing pod resolves through the normal grace period.
+- **A fault that comes back opens a new incident,** named `<first-name>-r<N>`, instead of folding silently into the resolved one.
+- **A stale `OOMKilled` is no longer a live signal.** A container that was OOM-killed and has been Running and Ready for 2 minutes (or twice the health-check interval, if longer) stops raising it.
+- **Pod detection skips the same namespaces the gate refuses.** It used to skip only `kube-system`. It now also skips the operator's namespace, `safety.excludedNamespaces` and every ClusterPersona `excludeNamespaces` entry. A pod failing there raises no incident at all. If the ClusterPersona cannot be read, the pod collector fails instead of guessing.
+- **The model is asked once per changed situation, and its replies are validated.** See [Detection and diagnosis](/how-dorgu-decides#detection-and-diagnosis). `--llm-cache-ttl=0` restores a call every cycle.
+- **More paths fail closed.** An unreadable rate limit refuses proposals until it recovers. With `POD_NAMESPACE` unset the gate refuses every proposal and AI is off. The chart always sets it. Set it yourself when you run the operator outside a cluster.
+- **A crash loop, a not-Ready container or a liveness kill still gets an advisory proposal.** The AI planner's plan for these often mixes a memory raise with advice, and the gate refuses a persona change the rules did not recommend (`Validate/action-class`). The persona-update steps are dropped and the plan's advisory steps are proposed as a notification. The refusal of the first plan is still recorded (a `DorguValidateRefused` Event on the incident and a gate-decision count). Sentences in the model's text that name a value of the dropped change are removed, and the explanation says the change was not proposed. A plan with nothing advisory in it stays refused.
+- **One bad image is one incident and one proposal.** A pod stuck on `ImagePullBackOff`, `ErrImagePull` or `InvalidImageName` no longer also raises `PodPendingLong` five minutes in. If the two still meet in one cycle, the pending diagnosis folds into the image-error incident while that image error is current.
+- **A container that exits right after it starts is detected in about a minute, not after five restarts.** `RestartLoop` and `LivenessRestarts` also read a container between runs, from its current termination, and a pod younger than the restart window counts its restarts as the delta. CrashLoopBackOff still owns the container in a cycle in which it fired.
+- **The leader lease is released when the manager stops,** so a rolling update no longer leaves detection without a leader for about 30 seconds.
+- **Cluster-scoped groups (nodes, control plane) are no longer sent to the model,** and a group the planner would never act on is diagnosed by the rules alone.
+
+### The event pipeline is off by default
+
+The Kubernetes-Event watcher and the `DorguEvent` cleaner no longer start, and the health cycle no longer writes a `DorguEvent` per signal, because nothing reads those records. Turn it back on with `eventPipeline.enabled=true` (`--enable-event-pipeline`). `dorguEvents.retention` and `dorguEvents.maxRecords` apply only then. A 0.12.x install had the pipeline on implicitly. After the upgrade it is off, so no `DorguEvent` is written or pruned, and the `dorguEvents.retention` and `dorguEvents.maxRecords` values you set (including ones carried over by `--reuse-values`) do nothing until you set `eventPipeline.enabled=true`. Existing `DorguEvent` records are not deleted, and with the pipeline off nothing prunes them:
+
+```bash
+kubectl delete dorguevents -A --all
+```
+
+The Kubernetes Events posted on incidents (what `kubectl describe` shows) are unchanged and always on.
+
+### New health signals
+
+`ReadinessNotReady`, `LivenessRestarts` and `RestartLoop` are new, so workloads that were quietly unhealthy get an incident for the first time. An app that legitimately needs longer than 2 minutes to become Ready should have a `startupProbe` (a container whose startup probe has not passed is never reported) or a longer `healthCheck.readinessThreshold`. See [Detect](/operator/features/self-healing#detect).
+
+## New flags and Helm values
+
+| Helm value | Flag | Default | What it does |
+|------------|------|---------|--------------|
+| `healthCheck.readinessThreshold` | `--readiness-threshold` | `2m` | How long a running container may stay not Ready before `ReadinessNotReady` |
+| `healthCheck.livenessRestarts.count` | `--liveness-restart-count` | `2` | Restarts within the window that raise `LivenessRestarts` or `RestartLoop` |
+| `healthCheck.livenessRestarts.window` | `--liveness-restart-window` | `10m` | The window. Must be **at least twice** `healthCheck.interval`, or the operator refuses to start. |
+| `healthCheck.recurrence.cap` | `--incident-recurrence-cap` | `3` | Recurrences of one fault within the window before the latest incident is reopened instead. `0` disables the cap. |
+| `healthCheck.recurrence.window` | `--incident-recurrence-window` | `24h` | The recurrence window |
+| `healthCheck.resolvedRetention` | `--resolved-incident-retention` | `720h` | Resolved incidents older than this are deleted, except the newest of each fault. `0` keeps them forever. Must not be shorter than the recurrence window. |
+| `remediation.pendingTTL` | `--remediation-pending-ttl` | `24h` | A `Pending` proposal older than this becomes `Expired`. `0` disables the TTL. A proposal's own `spec.approval.deadline` can shorten this but never extend it. |
+| `llm.cacheTTL` | `--llm-cache-ttl` | `30m` | How long an unchanged diagnosis or plan is reused. `0` asks the model every cycle. |
+| `eventPipeline.enabled` | `--enable-event-pipeline` | `false` | The Kubernetes-Event watcher and `DorguEvent` records |
+
+The full list is on the [Helm values](/operator/configuration/helm-values#self-healing) and [configuration](/operator/configuration/overview) pages.
+
+## New permission
+
+The operator's ClusterRole gains `delete` on `incidentmemories.dorgu.io`, and nothing else. It is how the operator prunes resolved incidents past `healthCheck.resolvedRetention`: Dorgu's own records, never a workload. If you manage the role yourself and skip this rule, every prune fails with a Forbidden error and nothing else changes. See [security and permissions](/security-and-permissions).
+
+## New metrics
+
+Every refusal, ticket, verification, rollback, heal credit and model request is now a metric, pre-registered at zero. The complete list is in the [metrics reference](/operator/reference/metrics).
+
+## Known gaps at this release
+
+- **A client with write access to `remediationactions/status` can forge an approval history together with a ticket.** What it can make the operator apply is limited to what the spec's own plan produces, and the operator never writes workloads, but the CLI trusts a ticket it finds in status. The CLI carries stopgap checks. An admission policy that makes the operator the only writer is planned. Until then, treat `patch` on `remediationactions/status` as the right to approve.
+- **Approver identity is not enforced.** `approvedBy` is free text, and nothing requires that the approver is not the proposer. Identity checks are planned for a later release.
+- **A rejection cooldown can be released by editing two annotations** on an action or an incident. It only lets Dorgu create one more `Pending` proposal, which still needs a human.
+- **CPU throttling is not detected.** The operator reads no cAdvisor or Prometheus data.
+- **A liveness kill that exits `0` is detected only through kubelet events,** which Kubernetes keeps for about an hour.
+- **A client-side `kubectl apply` from CI reads as unmanaged,** so Dorgu may propose to patch a Deployment your pipeline owns.
+- **An HPA scaling a Deployment during verification reads as divergence,** so the heal is `partial` and not credited.
+- **A cached AI summary can be up to `llm.cacheTTL` old.**
+
+The reasoning behind each is in [How Dorgu decides](/how-dorgu-decides#limits).

@@ -244,7 +244,7 @@ The ClusterPersona controller reconciles every 5 minutes, scanning nodes, namesp
 
   The schema was right and the code did not match it: this field's own description already said "the CPU claimed by the resource requests of **scheduled** pods".
 
-  Two consequences worth knowing. This field feeds the dashboard's cluster view, where a wrong number reads as authoritative in a way terminal output does not, so upgrade the operator if anything renders it. And [`dorgu health` no longer reads it at all](/cli/commands/health#resource-saturation): as of CLI v0.12.0 the CLI computes saturation itself from nodes and pods, so the two are corrected from both ends and the terminal figure does not depend on which operator version happens to be installed.
+  Two consequences worth knowing. Anything that renders this field, such as a dashboard you build on the CRDs, shows a wrong number as authoritative in a way terminal output does not, so upgrade the operator if anything renders it. (The dashboard the CLI used to serve, `dorgu platform serve`, was removed in v0.13.0.) And [`dorgu health` no longer reads it at all](/cli/commands/health#resource-saturation): as of CLI v0.12.0 the CLI computes saturation itself from nodes and pods, so the two are corrected from both ends and the terminal figure does not depend on which operator version happens to be installed.
 </Warning>
 
 ### Self-healing policy
@@ -283,7 +283,7 @@ The ClusterPersona controller reconciles every 5 minutes, scanning nodes, namesp
 | `relatedResources` | array | No | Other Kubernetes resources involved |
 | `resolution` | object | No | `action`, `remediationRef`, `appliedAt`, `outcome`, `duration` |
 
-`rootCause.provider` is `rule-based` or `ai-enhanced`. `resolution.outcome` is `resolved`, `partial`, `failed`, or `rollback` — written by the remediation controller when the loop finishes.
+`rootCause.provider` is `rule-based` or `ai-enhanced`. `resolution.outcome` is `resolved`, `partial`, `failed`, `rollback`, `acknowledged` or `self-resolved`, written by the remediation controller when the loop finishes. Only `resolved` is a heal Dorgu can claim. `self-resolved` means verification passed but Dorgu patched nothing, and `partial` means the recovery is real but the record cannot show Dorgu did it (the workload was changed by someone else, or a rollback restored only the persona). Count them separately.
 
 ### Status Fields
 
@@ -292,7 +292,20 @@ The ClusterPersona controller reconciles every 5 minutes, scanning nodes, namesp
 | `phase` | enum | `Detected`, `Investigating`, `Resolved`, `Recurring` |
 | `occurrenceCount` | int | How many times this incident has been detected |
 | `lastOccurrence` | timestamp | Most recent detection |
-| `conditions[]` | array | Standard Kubernetes conditions |
+| `conditions[]` | array | Standard Kubernetes conditions: `ProposalRefused`, `Recurring`, `Flapping`. See below. |
+
+### Conditions and annotations
+
+| Record | Meaning |
+|--------|---------|
+| Condition `ProposalRefused` | `True` with reason `<Stage>_<Reason>` (for example `ModePolicy_SelfHealingMode`) when the gate refused a proposal for this incident. There is no RemediationAction to carry it, so it lives here. `False` with `ProposalMade`, `ProposalDeferred` or `IncidentResolved` once a later proposal, a deferral or the resolution answers it. |
+| Condition `Recurring` | `True`, reason `RecurrenceOfResolvedIncident`, on an incident opened because a fault came back after an earlier one resolved. |
+| Condition `Flapping` | The recurrence cap was reached, so the latest incident was reopened instead of a new one created. |
+| Annotations `dorgu.io/recurrence-of`, `dorgu.io/recurrence-count` | The incident this one recurs, and how many earlier incidents the fault has had. Recurrences are named `<first-name>-r<N>`. |
+| Annotations `dorgu.io/escalated-from`, `dorgu.io/escalated-at`, `dorgu.io/containers` | The path a fault took as it changed shape (last 16 entries), when it last escalated, and the containers it is about. |
+| Annotations `dorgu.io/last-resolution`, `dorgu.io/recurrences-folded` | On a reopened (capped) incident: the record of the resolution it replaced, and how many recurrences were folded in. |
+
+The `dorgu.io/escalated-at` annotation and the annotations on a RemediationAction that record what a proposal answered are ordinary, user-writable annotations. Editing them can release a rejection cooldown early. See [limits](/how-dorgu-decides#limits).
 
 ### Attribution
 
@@ -328,17 +341,19 @@ An incident auto-resolves only on **positive evidence of recovery**: its signal 
 | `incidentRef` | object | Yes | The IncidentMemory that triggered this remediation |
 | `personaRef` | object | Yes | The persona to be remediated |
 | `trustLevel` | int | Yes | Minimum trust level required to execute, 0–5 |
-| `action` | object | Yes | Single-action fallback: `type`, `patch`, `prePatchState` |
-| `steps[]` | array | No | The ordered plan. When non-empty, this is the plan of record. |
+| `action` | object | Yes | **Deprecated.** A notification only: the operator writes `{type: notification}` with no `patch` and no `prePatchState`. Nothing applies it. Read `steps[]`, or `status.gate`. |
+| `steps[]` | array | No | **The only plan.** The rule engine writes its change as one `persona-update` step. |
 | `workloadRef` | object | No | The live workload this remediation concerns, and who owns it. Written by **operator v0.9.0+**. See below. |
 | `planSource` | enum | No | `rule-based` or `ai-anthropic` |
 | `planSummary` | string | No | The AI's root-cause and plan explanation |
 | `explanation` | string | Yes | Human-readable reason for the proposal |
 | `confidence` | string | Yes | Diagnosis confidence as a decimal string, e.g. `"0.85"` |
-| `approval` | object | No | `required` (default `true`), `deadline`, `autoApproveRule` |
+| `approval` | object | No | `required` (default `true`), `deadline`, `autoApproveRule`. A `deadline` can shorten the 24 hour pending window (`remediation.pendingTTL`) but never extend it. |
 | `rollback` | object | No | `enabled` (default `true`), `healthCheckAfter`, `maxRetries` (default `1`) |
 
-`action.type` is one of `persona-update`, `notification`, or `git-pr`. `action.patch` is a JSON merge patch applied to the **Persona** spec — never to a workload.
+<Warning>
+  **`spec.action` is deprecated as of operator v0.13.0.** Operators before it wrote the change into `spec.action.patch`, and the CLI read it. Now `spec.steps[]` is the plan a human reviews, and what is applied is `status.applyTicket`, never `spec.action`. An edit to the spec after the operator proposed the action refuses the approval. `spec.workloadRef`, `spec.steps[].safety` and `spec.action.prePatchState` are still written for one more release; where they disagree with `status.gate`, trust `status.gate`. A CLI older than v0.14.0 still reads `steps[]` and patches without a ticket, so [upgrade the CLI first](/upgrade-guide).
+</Warning>
 
 ### `workloadRef` Fields
 
@@ -470,24 +485,45 @@ How the CLI prints these: [guardrail verdicts](/cli/commands/remediation#guardra
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `phase` | enum | `Pending`, `Approved`, `Applying`, `Verifying`, `Completed`, `RolledBack`, `Failed`, `Rejected`, `Expired` |
+| `phase` | enum | `Pending`, `Approved`, `Ticketed`, `Applying`, `Verifying`, `Completed`, `RolledBack`, `Failed`, `Rejected`, `Expired`, `Acknowledged` |
 | `approvedBy` | string | Who approved it — the CLI records `cli-user` |
 | `approvedAt` | timestamp | When it was approved |
 | `appliedAt` | timestamp | When the patch was applied |
 | `verificationResult` | enum | `Healthy`, `Degraded`, `Unknown` |
 | `currentStep` | int | 1-based order of the step being executed |
 | `stepStatuses[]` | array | Per-step `order`, `phase` (`Pending`, `Applied`, `Verified`, `Failed`, `Skipped`), `appliedAt`, `verificationResult` |
-| `conditions[]` | array | Standard Kubernetes conditions: `Applied`, `Verified`, `RolledBack` |
+| `gate` | object | **Operator-written.** What the gate read and decided: `phase` (`Proposal` or `ApprovalRecheck`), `result` (`Pass`, `Clamp`, `Refuse`), `evaluatedAt`, `observed` (workload UID and resourceVersion, persona generation, live values), `ownership` (`managedBy`, `detail`, `resolved`), `verdicts[]` (`stage`, `guardrail`, `verdict`, `reason`, `numbers`) and `prePatchState` (the baseline the guardrails measured against, always taken from the live workload). Operator v0.13.0+. |
+| `applyTicket` | object | **Operator-written.** The one change that may be applied: `workloadUID`, `container`, `patch` (a merge patch in persona-spec shape), `verdicts[]`, `observedResourceVersion`, `observedGeneration`, `issuedAt`, `expiresAt` (10 minutes after issue). Present from phase `Ticketed`. Operator v0.13.0+. |
+| `conditions[]` | array | Standard Kubernetes conditions: `Proposed`, `Ticketed`, `Applied`, `GateRefused`, `Verified`, `HealCredited`, `WorkloadPatched`, `WorkloadDiverged`, `RolledBack`, `PersonaEditedSinceHeal`, `Expired`, `Rejected`, `RejectionReason`. See below. |
+
+### Conditions on a RemediationAction
+
+| Condition | Written by | Meaning |
+|-----------|------------|---------|
+| `Proposed` | Operator | The gate cleared this plan at proposal, at this spec generation. An action without it was not proposed by the gate and is refused at approval (`NoProposalRecord`). |
+| `Ticketed` | Operator | Approval passed the re-check and `status.applyTicket` was written. |
+| `GateRefused` | Operator | The gate refused at approval or apply. The **reason** is the refusing guardrail in CamelCase (`BlastRadius`, `WorkloadGone`, `NoProposalRecord`, `SpecChanged`, `SelfHealingMode`, `PolicyUnreadable`, `UnknownMode`, `Concurrent`, `TicketExpired`, `NotTicketed`, `ClusterUnreadable`, and so on). Clients key on the reason and never parse the message. |
+| `Applied` | Operator | `False` with `GateRefusedAtApproval` when the gate refused an approval (no cooldown), `PreconditionRejected` when the executor refused a ticket, `AdvisoryOnly` for a plan with nothing to apply. |
+| `WorkloadPatched` | CLI | The CLI patched the Deployment. Names the Deployment, container and fields. |
+| `HealCredited` | Operator | `True` only if the CLI recorded `WorkloadPatched`, the Deployment's generation moved past the ticket's, and the live container's resources equal the ticket's. `False` reasons: `NothingPatched`, `ResourcesNotTicket`, `WorkloadDiverged`, `WorkloadUnreadable`. |
+| `WorkloadDiverged` | Operator | `True` when someone else changed the workload after the ticket, or when a rollback restored the persona but the live Deployment still carries the change (the condition then names each field, its value now and before, and the command that finishes the rollback). `False` with reason `WorkloadRestored` means the workload was never patched, so there was nothing left to undo. The heal is `partial`. |
+| `PersonaEditedSinceHeal` | Operator | A rollback left a persona field alone because someone changed it after the heal. Names the field. |
+| `Expired` | Operator | Reason `ApprovalTimedOut` (nobody decided in time), `Superseded` (the incident escalated to a worse shape), or `PredatesGate` (the proposal was made by an operator older than v0.13.0 and cannot be approved). |
+| `RejectionReason` | CLI | Why a human rejected the proposal. Reason is one of `WrongDiagnosis`, `TooRisky`, `NotNow`, `Duplicate`, `NotNeeded`, `Other`; the message is the note. |
 
 <Note>
-  `steps[]` is populated, validated, and rendered by the CLI, and `currentStep` / `stepStatuses[]` exist in the schema — but the controller currently executes the single `spec.action` patch rather than walking the plan step by step. `autoApproveRule` is likewise present in the CRD and ignored by controllers: auto-approve graduation is not implemented.
+  The controller applies `status.applyTicket`, which merges every `persona-update` step of the plan into one patch. It does not walk the plan step by step, so `currentStep` and `stepStatuses[]` exist in the schema without being driven. `autoApproveRule` is present in the CRD and ignored by controllers: auto-approve is not implemented.
 </Note>
 
 ## DorguEvent
 
 `DorguEvent` is a write-once, classified Kubernetes event record. The event pipeline watches core Kubernetes events, classifies them by severity and category, correlates them to a persona and incident where it can, and stores them. There is no status subresource, so the record is immutable.
 
-Records are bounded **by age and by count**: `dorguEvents.retention` (default `24h`) and `dorguEvents.maxRecords` (default `2000`, oldest pruned first). A per-record `spec.ttl` overrides the age bound for that record. See [DorguEvent retention](/operator/configuration/helm-values#dorguevent-retention).
+<Note>
+  **The event pipeline is off by default since operator v0.13.0** (`eventPipeline.enabled=false`), because nothing in Dorgu reads these records. On a default install no `DorguEvent` is written. The Kubernetes Events posted on incidents, which `kubectl describe` shows, are separate and always on.
+</Note>
+
+Records are bounded **by age and by count**: `dorguEvents.retention` (default `24h`) and `dorguEvents.maxRecords` (default `2000`, oldest pruned first). A per-record `spec.ttl` overrides the age bound for that record. See [DorguEvent retention](/operator/configuration/helm-values#event-pipeline-and-dorguevent-retention).
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|

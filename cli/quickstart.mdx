@@ -74,7 +74,7 @@ kubectl create secret generic dorgu-llm -n dorgu-system \
   --from-literal=ANTHROPIC_API_KEY=sk-ant-...
 
 helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  -n dorgu-system --reuse-values \
+  -n dorgu-system --reset-then-reuse-values \
   --set llm.provider=claude \
   --set llm.existingSecret=dorgu-llm
 ```
@@ -206,7 +206,7 @@ This is the review surface: the plan summary, then each step in execution order 
 dorgu remediation approve <remediation-name> -n demo
 ```
 
-Two things happen. The operator patches the `ApplicationPersona` spec — the app's desired-state record. Then the CLI shows you exactly which Deployment, container, and fields it is about to change, asks for confirmation, and patches the Deployment with **your** credentials. Add `--yes` to skip the prompt.
+Three things happen. The operator re-checks the approval against the cluster as it is now and, if the check clears, issues a short-lived apply ticket and patches the `ApplicationPersona` spec, the app's desired-state record. The CLI waits up to 30 seconds for that ticket, shows you exactly which Deployment, container, and fields it is about to change, asks for confirmation, and patches the Deployment with **your** credentials, using only what the ticket says. Add `--yes` to skip the prompt. If the operator refuses, nothing is applied and the CLI prints the reason. See [How Dorgu decides](/how-dorgu-decides).
 
 ```bash
 kubectl rollout status deploy/memhog -n demo --timeout=120s

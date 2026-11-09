@@ -40,22 +40,29 @@ prometheus:
   enabled: false
   url: ""
 
-websocket:
-  enabled: false
-  port: 9090
-  service:
-    type: ClusterIP
-    port: 9090
-
 healthCheck:
   enabled: true
   interval: 60s
+  readinessThreshold: 2m
+  livenessRestarts:
+    count: 2
+    window: 10m
+  recurrence:
+    cap: 3
+    window: 24h
+  resolvedRetention: 720h
+
+remediation:
+  pendingTTL: 24h
 
 safety:
   excludedNamespaces: []
 
 metricsServer:
   enabled: true
+
+eventPipeline:
+  enabled: false
 
 dorguEvents:
   retention: 24h
@@ -64,6 +71,7 @@ dorguEvents:
 llm:
   provider: ""
   model: ""
+  cacheTTL: 30m
   existingSecret: ""
   existingSecretKey: "ANTHROPIC_API_KEY"
   apiKey: ""
@@ -127,6 +135,13 @@ Persona validation itself is unaffected: the controller still validates every De
 |-------|------|---------|-------------|
 | `healthCheck.enabled` | bool | `true` | Enable the health-check reconciler: detection, diagnosis, and remediation proposals. **On by default since chart 0.8.0**, and in the operator binary itself since 0.12.0. Set it to `false` to run without self-healing. |
 | `healthCheck.interval` | duration | `60s` | How often the reconciler runs a detection cycle |
+| `healthCheck.readinessThreshold` | duration | `2m` | How long a running container may stay not Ready before a `ReadinessNotReady` incident. Counted from the container start plus the probe's `initialDelaySeconds`. Maps to `--readiness-threshold`. **New in chart 0.13.0.** |
+| `healthCheck.livenessRestarts.count` | int | `2` | Container restarts within the window that raise a `LivenessRestarts` or `RestartLoop` incident without waiting for CrashLoopBackOff. Maps to `--liveness-restart-count`. **New in chart 0.13.0.** |
+| `healthCheck.livenessRestarts.window` | duration | `10m` | The restart window. Must be at least twice `healthCheck.interval`, because the restart history is one observation per cycle: the operator refuses to start otherwise. Maps to `--liveness-restart-window`. **New in chart 0.13.0.** |
+| `healthCheck.recurrence.cap` | int | `3` | Recurrences of one fault within the window before the latest incident is reopened instead of a new one being created. `0` disables the cap. Maps to `--incident-recurrence-cap`. **New in chart 0.13.0.** |
+| `healthCheck.recurrence.window` | duration | `24h` | The recurrence window. Maps to `--incident-recurrence-window`. **New in chart 0.13.0.** |
+| `healthCheck.resolvedRetention` | duration | `720h` | Resolved incidents whose last sighting is older than this are deleted, except the newest resolved incident of every fault and any a live RemediationAction names. `0` keeps them forever. Must not be shorter than `healthCheck.recurrence.window`. Maps to `--resolved-incident-retention`. **New in chart 0.13.0.** Needs the `delete` permission on `incidentmemories`, which the chart grants. |
+| `remediation.pendingTTL` | duration | `24h` | A `Pending` proposal older than this becomes `Expired`: terminal, nothing applied, no cooldown. `0` disables the TTL. A proposal's own `spec.approval.deadline` can shorten the window but never extend it. Maps to `--remediation-pending-ttl`. **New in chart 0.13.0.** |
 | `metricsServer.enabled` | bool | `true` | Enable metrics-server integration for container-level CPU/memory detection |
 
 Rendered as `--enable-health-check=<value>` on the operator container either way, so the setting is always visible in the pod spec:
@@ -161,24 +176,27 @@ safety:
     - ingress-nginx
 ```
 
-Detection is not affected. An incident in a protected namespace is still recorded as an `IncidentMemory` with its diagnosis; the operator just proposes no fix for it.
+**From operator v0.13.0, pod detection skips these namespaces too.** A pod that fails in a protected namespace raises no incident at all. Before 0.13.0 it raised one that was recorded and never remediated. Node and control-plane findings belong to no namespace and are unaffected. If the ClusterPersona list cannot be read, the pod collector fails rather than guess.
 
 <Note>
   **Fixed in operator v0.12.0.** Older releases protected a hardcoded `dorgu-operator-system`, the kustomize default, rather than the namespace the chart actually installs into. With the documented `--namespace dorgu-system` install, Dorgu's own namespace was not protected at all. Upgrade if you run 0.11.x.
 </Note>
 
-### DorguEvent retention
+### Event pipeline and DorguEvent retention
 
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
+| `eventPipeline.enabled` | bool | `false` | Run the Kubernetes-Event watcher and write `DorguEvent` records. **Off by default since chart 0.13.0**: nothing in Dorgu reads those records. Maps to `--enable-event-pipeline`. |
 | `dorguEvents.retention` | duration | `24h` | How long a `DorguEvent` record is kept before the cleaner removes it. Maps to `--dorgu-event-retention`. |
 | `dorguEvents.maxRecords` | int | `2000` | Maximum records kept regardless of age; the oldest go first. `0` drops the cap and leaves retention as the only bound. Maps to `--dorgu-event-max-records`. |
+
+The two `dorguEvents.*` values apply only when `eventPipeline.enabled=true`, and the chart renders their flags only then. With the pipeline off no watcher or cleaner starts, no `DorguEvent` is written, and existing records are not pruned. Delete them with `kubectl delete dorguevents -A --all`. The Kubernetes Events on incidents, which `kubectl describe` shows, are separate and always on.
 
 `DorguEvent` records are Dorgu's own log of what it saw, readable with `kubectl get dorguevent -A`. They live in etcd, so they are bounded twice over: by age, and by count.
 
 The count bound is the one that holds on a large cluster. Records arrive in proportion to cluster size, so a time window alone bounds nothing: a five-app clean-room cluster produced 187 records in 100 minutes, roughly 2,700 a day, every one of them inside the 24-hour window and all of them in etcd. The cleaner runs every 30 minutes, deletes oldest-first, and runs one pass at startup rather than waiting a full interval, because a restarted operator inherits the largest backlog it will ever see.
 
-Both flags are rendered on the operator container unconditionally, so the pod spec always states what bounds the record count, `maxRecords: 0` included:
+With the pipeline on, both flags are rendered on the operator container, so the pod spec states what bounds the record count, `maxRecords: 0` included:
 
 ```bash
 kubectl -n dorgu-system get deploy dorgu-operator \
@@ -195,6 +213,7 @@ kubectl -n dorgu-system get deploy dorgu-operator \
 |-------|------|---------|-------------|
 | `llm.provider` | string | `""` | `claude` enables Anthropic. Empty disables AI. `gemini` enables AI *diagnosis* only, since the remediation planner requires `claude`. |
 | `llm.model` | string | `""` | Model override. Empty uses the provider default (`claude-sonnet-4-6` for the planner). |
+| `llm.cacheTTL` | duration | `30m` | How long an AI diagnosis or plan is reused while an incident's signals are unchanged. A change asks the model again at once; this only bounds how stale an unchanged answer may get. `0` asks the model every health-check cycle. Maps to `--llm-cache-ttl`. **New in chart 0.13.0.** |
 | `llm.existingSecret` | string | `""` | Name of a pre-created Secret holding the API key. **Preferred.** |
 | `llm.existingSecretKey` | string | `ANTHROPIC_API_KEY` | Key within that Secret |
 | `llm.apiKey` | string | `""` | Dev only. A raw key, requires `createSecret=true` |
@@ -243,7 +262,7 @@ kubectl create clusterrolebinding prometheus-dorgu-metrics \
   --serviceaccount=monitoring:prometheus
 ```
 
-The operator itself needs `create` on `tokenreviews` and `subjectaccessreviews` to check those scrapes, and the chart grants both only while `metrics.secure=true`. Counters for incidents, proposals and remediation transitions are exported as `dorgu_incidents_total`, `dorgu_proposals_total` and `dorgu_remediation_transitions_total`.
+The operator itself needs `create` on `tokenreviews` and `subjectaccessreviews` to check those scrapes, and the chart grants both only while `metrics.secure=true`. The operator exports gate decisions, apply tickets, heal credit, stage durations, incident counters and model usage. Every family is listed in the [metrics reference](/operator/reference/metrics).
 
 ### ArgoCD
 
@@ -262,16 +281,9 @@ The watcher auto-detects whether the ArgoCD CRD exists. If `enabled: true` but t
 
 Example: `http://prometheus-server.monitoring:9090`
 
-### WebSocket
+### Removed: the WebSocket server
 
-| Value | Type | Default | Description |
-|-------|------|---------|-------------|
-| `websocket.enabled` | bool | `false` | Enable the operator's WebSocket server |
-| `websocket.port` | int | `9090` | WebSocket server port |
-| `websocket.service.type` | string | `ClusterIP` | Service type for the WebSocket endpoint |
-| `websocket.service.port` | int | `9090` | Service port |
-
-When enabled, the chart creates a Service on the specified port. No Dorgu CLI command connects to it since CLI `v0.13.0`, so leave it off unless you have your own client. See [WebSocket server](/operator/features/websocket).
+Chart 0.13.0 removed the operator's WebSocket server and its `websocket.enabled`, `websocket.port`, `websocket.service.type` and `websocket.service.port` values, the `<release>-websocket` Service and the container's `websocket` port. The server was unauthenticated and nothing used it. A values file that still sets `websocket.*` installs unchanged, because Helm ignores unknown keys. See the [upgrade guide](/upgrade-guide#the-websocket-server-is-removed).
 
 ### Resources
 

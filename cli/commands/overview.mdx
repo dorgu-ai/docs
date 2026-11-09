@@ -15,8 +15,9 @@ dorgu
 │   ├── list                List remediation proposals
 │   ├── diff <name>         Show the proposed change
 │   ├── approve <name>      Approve a pending remediation and heal the workload
-│   ├── reject <name>       Reject a remediation proposal
-│   └── heal <name>         Apply an approved remediation to the workload
+│   ├── reject <name>       Reject a remediation proposal, with a reason
+│   └── heal <name>         Apply an approved remediation's ticket to the workload
+├── report                  Local summary of how the loop is doing on this cluster
 ├── persona                 ApplicationPersona CRDs
 │   ├── import              Create personas from Deployments already running
 │   ├── list                List personas across namespaces
@@ -44,6 +45,7 @@ The command tree above is a plain listing. Use these links for the full flag ref
 | `dorgu health` | [health](/cli/commands/health) | Cluster health summary |
 | `dorgu incidents` | [incidents](/cli/commands/incidents) | List and inspect detected incidents |
 | `dorgu remediation` | [remediation](/cli/commands/remediation) | Review, approve, reject, and apply proposed fixes |
+| `dorgu report` | [report](/cli/commands/report) | Local summary of safe heals, approvals, refusals and timings (text or JSON) |
 | `dorgu persona` | [persona](/cli/commands/persona) | Import and inspect ApplicationPersona CRDs |
 | `dorgu cluster` | [cluster](/cli/commands/cluster) | Inspect the ClusterPersona the operator maintains |
 | `dorgu version` | [version](/cli/commands/version) | Show version info |
@@ -75,7 +77,7 @@ Set `DORGU_DEBUG=1` to see `kubectl`'s raw output in error messages. By default 
 | `1` | Error: the command could not run. An unreachable cluster, a missing kubeconfig, no `kubectl`, a failed API call. |
 | `2` | `dorgu health --exit-code` only: active critical incidents |
 | `3` | `dorgu health --exit-code` only: health could not be judged |
-| `4` | `dorgu remediation approve` / `heal` only: **declined by design.** Dorgu understood the plan and chose not to write, because something else owns the workload. Nothing failed and nothing changed. |
+| `4` | `dorgu remediation approve` / `heal` only: **declined by design.** Dorgu understood the plan and chose not to write, because something else owns the workload or because the operator's gate refused the approval. Nothing failed and nothing was applied. |
 
 Codes 2 and 3 are opt-in and specific to [`dorgu health`](/cli/commands/health#exit-codes). An unknown subcommand is an error with a non-zero exit, not a help dump.
 

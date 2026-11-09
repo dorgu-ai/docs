@@ -1,0 +1,413 @@
+---
+title: dorgu report
+description: Print a local summary of how the loop is doing on this cluster, as text or as JSON (schema dorgu.report/v1)
+---
+
+## Overview
+
+`dorgu report` answers "is this working here?" from the cluster's own records. It reads `RemediationAction`, `IncidentMemory`, persona and Event resources, computes the numbers below for a time window, and prints them. It sends nothing anywhere. If you are a design partner, the output is what you paste to the Dorgu team.
+
+It is read-only and needs **CLI v0.14.0**. The heal and refusal sections need **operator v0.13.0** or newer, which is the release that writes the records they are computed from.
+
+<Note>
+  **It never prints a zero for something it could not measure.** A figure with no sample behind it reads `no data` (`null` with `no_data: true` in JSON). A cluster read that fails is named in the output, and every section that depends on it says `no data` with the reason. A zero in this report is a measurement.
+</Note>
+
+## Synopsis
+
+```bash
+dorgu report [flags]
+```
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--since` | string | `7d` | Window to report on: `7d`, `24h`, `2w`, `90m`, or any Go duration |
+| `-n, --namespace` | string | all namespaces | Limit the report to one namespace |
+| `--kubeconfig` | string | `kubectl`'s own resolution: `$KUBECONFIG`, then `~/.kube/config` | Path to the kubeconfig |
+| `--json` | bool | `false` | Print JSON, schema `dorgu.report/v1` (inherited global flag) |
+
+### Examples
+
+```bash
+dorgu report
+dorgu report --since 24h
+dorgu report --since 30d --json
+dorgu report -n production
+```
+
+## What it reports
+
+| Section | What it tells you |
+|---------|-------------------|
+| **North star: safe heals** | Clean heals whose approval-time gate run passed. A heal is **clean** only when the RemediationAction completed, `HealCredited` is `True`, and the incident outcome is `resolved`. |
+| **Heal accounting** | How every RemediationAction created in the window ended, and why each one that is not a clean heal is not one: `partial`, `self_resolved`, `heal_not_credited`, `no_credit_record`, `outcome_unconfirmed`, `rolled_back`, `approved_not_healed`, `failed`, `rejected`, `expired`, `acknowledged`, `refused_by_gate`, `in_flight`. Every action lands in exactly one bucket. `approved_not_healed` is an approval that never became a heal: it was approved with `--no-heal` (or never patched), so the workload kept its problem and the operator rolled the persona back. It is not counted as a rollback of a heal. |
+| **Active cluster, review depth, approval rate** | Whether any proposal was decided in the window, decisions per week, and approved against rejected. Below 5 decisions it prints the counts and says `too few decisions` instead of a rate. Beyond that, an approval rate under 30% reads as noisy proposals and over 80% as possible rubber-stamping. |
+| **Time to heal** | p50 and p90 for detect to proposal, proposal to decision (human time), decision to applied, and applied to verified. Detect to proposal is measured once per incident, to its first proposal. |
+| **Proposal precision** | The share of decided proposals rejected with the reason `wrong-diagnosis`, and a breakdown of every other reason. See [`remediation reject`](/cli/commands/remediation#remediation-reject). |
+| **Refusal mix** | What the gate refused, by phase (proposal, approval, apply), stage and reason, with each reason's share of proposals. A reason over 30% of proposals, on at least 10 proposals, is flagged. An outstanding proposal is shown separately as `deferred`, because it is waiting for a decision and is not a refusal. |
+| **First-run clamps** | How many proposals had a value narrowed by a guardrail before you saw the plan, by guardrail. |
+| **CLI declines** | Times `approve` or `heal` declined, by reason. Kubernetes keeps Events for about an hour, so declines older than that are not counted. |
+| **Not measurable from a cluster** | The measures a cluster cannot report (external installs, design partners, time to first value, retention, and similar), listed so their absence is not read as zero. |
+
+The text output labels some lines with short IDs (`A2`, `A5`, `A6`, `Q1`, `Q2`, `Q3`, `Q6`). They name the measure, so two pasted reports can be compared line by line.
+
+## Example output
+
+This is real output from the report's own test fixture, with the cluster name changed. Your numbers will differ. Long lines are shortened with `...`.
+
+```text
+Dorgu report (dorgu.report/v1)
+  Window:    2026-11-01T12:00:00Z to 2026-11-08T12:00:00Z (last 7d)
+  Cluster:   staging-eks, namespace scope: all
+  Operator:  v0.13.0
+  Read:      RemediationActions 12, IncidentMemories 9, personas 12, ClusterPersonas 1, Events 7
+  Basis:     RemediationActions and IncidentMemories count by when they were created, a proposal-time refusal by when it
+             was recorded, Events by their last timestamp. A proposal made before the window and decided inside it is not in it.
+
+North star
+  Safe heals: 1  (clean heals whose approval-time gate run passed; clean heals in all: 1)
+
+Heal accounting (12 RemediationActions created in the window)
+  completed: 4
+  clean heals: 1 (HealCredited=True and the incident outcome is resolved)
+  everything else, by why it is not a clean heal:
+    partial              1
+    self_resolved        2
+    rolled_back          1
+    failed               1
+    rejected             3
+    refused_by_gate      2
+    in_flight            1
+  HealCredited=False by reason: NothingPatched 1, ResourcesNotTicket 1
+
+Tier A: value and adoption
+  A2 active cluster:    yes (11 proposals decided in the window)
+  A5 review depth:      11.0 decisions per week (11 over 7 days)
+  A6 approval rate:     72.7% (8 approved, 3 rejected; inside the 30-80% band)
+  A7 external agents:   no data (a RemediationAction records how its plan was written, not who proposed it ...)
+  note: A2 and A5 count decisions (approved or rejected). Reading a proposal with `dorgu remediation diff` leaves no record, so a decision is the measurable proxy for a review.
+  note: A6 is a band, not a target: under 30% means noisy proposals, over 80% means rubber-stamping.
+
+Tier Q: operational quality
+  Q1 time to heal (p50 / p90, n):
+    detect -> proposal             1h00m / 1h00m (n=7)
+    proposal -> decision (human)   1h00m / 1h00m (n=11)
+    decision -> applied            1m00s / 1m00s (n=5)
+    applied -> verified            59m00s / 59m00s (n=4)
+  Q2 proposal precision: 9.1% of decided proposals were called wrong-diagnosis (1 of 11)
+    rejections by reason: no-reason-given 1, too-risky 1, wrong-diagnosis 1
+  Q3 LLM efficiency:     no data (LLM calls and cost per incident are operator metrics, not stored on any CRD)
+    plan sources: ai-anthropic 1, rule-based 11
+  Q6 refusal mix (14 proposals; phase / stage / reason):
+    apply     Ticket         TicketExpired              1  (7.1%)
+    approval  Guardrails     BlastRadius                1  (7.1%)
+    proposal  Ground         WorkloadGone               1  (7.1%)
+    proposal  ModePolicy     SelfHealingMode            1  (7.1%)
+    not refusals: 1 incident(s) with a proposal waiting for a decision (counted neither as refusals nor as proposals)
+
+First-run clamps (spec.steps[].safety and status.gate)
+  proposals with a clamped value: 1
+  clamps by guardrail: blast-radius 1
+  step verdicts: clamped 1, rejected 1
+
+CLI declines (Events on RemediationActions)
+  DorguCLIDeclined           2
+  DorguCLINoTicket           3
+  DorguCLITicketExpired      1
+  DorguCLITicketMismatch     1
+  note: The CLI records a decline only as a Kubernetes Event, and Kubernetes keeps Events for about an hour ...
+
+Not measurable from a cluster
+  A1   External installs: a cluster cannot tell whether it is ours; read from partner reports
+  A3   Design partners: comes from the conversation log
+  A4   Time to first value: measured on a clean-room or screen-shared install, not from CRDs
+  A8   4-week retention: needs reports from earlier weeks; one cluster's report cannot show it
+  A9   Would-pay signals: comes from the conversation log
+  A10  Inbound: comes from GitHub
+  Q4   Operator footprint: not measured by this report: read the operator's CPU and memory from its own metrics ...
+  Q5   Clean-room: comes from clean-room runs
+```
+
+Where there is no sample, a line reads `no data (reason)`. In the example, `Q3` has no data because model calls and cost per incident are operator metrics (see the [metrics reference](/operator/reference/metrics)) and are not stored on any resource.
+
+## JSON output
+
+`--json` prints one document. `schema` is `dorgu.report/v1`, and it changes only when a field is removed or its meaning changes. New fields can be added without a new version, so read the fields you need and ignore the rest.
+
+```json
+{
+  "schema": "dorgu.report/v1",
+  "generated_at": "2026-11-08T12:00:00Z",
+  "window": {
+    "since": "7d",
+    "start": "2026-11-01T12:00:00Z",
+    "end": "2026-11-08T12:00:00Z"
+  },
+  "cluster": {
+    "context": "staging-eks",
+    "namespace": "all",
+    "operator_version": "v0.13.0",
+    "application_personas": 12,
+    "self_healing_modes": [
+      "propose"
+    ]
+  },
+  "sources": {
+    "remediation_actions": {
+      "ok": true,
+      "count": 12
+    },
+    "incidents": {
+      "ok": true,
+      "count": 9
+    },
+    "personas": {
+      "ok": true,
+      "count": 12
+    },
+    "cluster_personas": {
+      "ok": true,
+      "count": 1
+    },
+    "events": {
+      "ok": true,
+      "count": 7
+    }
+  },
+  "input_errors": [],
+  "heal_accounting": {
+    "total": 12,
+    "completed": 4,
+    "clean": 1,
+    "safe_heals": 1,
+    "no_data": false,
+    "excluded": {
+      "acknowledged": 0,
+      "approved_not_healed": 0,
+      "expired": 0,
+      "failed": 1,
+      "heal_not_credited": 0,
+      "in_flight": 1,
+      "no_credit_record": 0,
+      "outcome_unconfirmed": 0,
+      "partial": 1,
+      "refused_by_gate": 2,
+      "rejected": 3,
+      "rolled_back": 1,
+      "self_resolved": 2
+    },
+    "heal_not_credited_by_reason": {
+      "NothingPatched": 1,
+      "ResourcesNotTicket": 1
+    }
+  },
+  "tier_a": {
+    "ns_safe_heals": {
+      "safe_heals": 1,
+      "clean_heals": 1,
+      "no_data": false
+    },
+    "a2_active_cluster": {
+      "active": true,
+      "proposals_decided": 11
+    },
+    "a5_review_depth": {
+      "proposals_decided": 11,
+      "window_days": 7,
+      "per_week": 11,
+      "no_data": false
+    },
+    "a6_approval_rate": {
+      "approved": 8,
+      "rejected": 3,
+      "rate": 0.727,
+      "no_data": false,
+      "too_few_decisions": false,
+      "band": "in"
+    },
+    "a7_external_agent_share": {
+      "no_data": true,
+      "reason": "..."
+    },
+    "decisions": {
+      "approved": 8,
+      "rejected": 3
+    },
+    "notes": [
+      "..."
+    ]
+  },
+  "tier_q": {
+    "q1_time_to_heal": {
+      "detect_to_proposal": {
+        "n": 7,
+        "p50_seconds": 3600,
+        "p90_seconds": 3600,
+        "no_data": false
+      },
+      "proposal_to_decision": {
+        "n": 11,
+        "p50_seconds": 3600,
+        "p90_seconds": 3600,
+        "no_data": false
+      },
+      "decision_to_applied": {
+        "n": 5,
+        "p50_seconds": 60,
+        "p90_seconds": 60,
+        "no_data": false
+      },
+      "applied_to_verified": {
+        "n": 4,
+        "p50_seconds": 3540,
+        "p90_seconds": 3540,
+        "no_data": false
+      }
+    },
+    "q2_proposal_precision": {
+      "decided": 11,
+      "wrong": 1,
+      "rate": 0.091,
+      "no_data": false,
+      "too_few_decisions": false,
+      "rejections_by_reason": {
+        "duplicate": 0,
+        "no-reason-given": 1,
+        "not-needed": 0,
+        "not-now": 0,
+        "other": 0,
+        "too-risky": 1,
+        "wrong-diagnosis": 1
+      }
+    },
+    "q3_llm_efficiency": {
+      "no_data": true,
+      "reason": "LLM calls and cost per incident are operator metrics (dorgu_llm_requests_total, dorgu_llm_tokens_total), not stored on any CRD",
+      "plan_sources": {
+        "ai-anthropic": 1,
+        "rule-based": 11
+      }
+    },
+    "q6_refusal_mix": {
+      "proposals": 14,
+      "no_data": false,
+      "rows": [
+        {
+          "phase": "apply",
+          "stage": "Ticket",
+          "reason": "TicketExpired",
+          "count": 1,
+          "share_of_proposals": 0.071,
+          "flagged": false
+        },
+        {
+          "phase": "approval",
+          "stage": "Guardrails",
+          "reason": "BlastRadius",
+          "count": 1,
+          "share_of_proposals": 0.071,
+          "flagged": false
+        },
+        {
+          "phase": "proposal",
+          "stage": "Ground",
+          "reason": "WorkloadGone",
+          "count": 1,
+          "share_of_proposals": 0.071,
+          "flagged": false
+        },
+        {
+          "phase": "proposal",
+          "stage": "ModePolicy",
+          "reason": "SelfHealingMode",
+          "count": 1,
+          "share_of_proposals": 0.071,
+          "flagged": false
+        }
+      ],
+      "deferred_proposals": 1
+    }
+  },
+  "first_run_clamps": {
+    "proposals_with_clamp": 1,
+    "step_verdicts": {
+      "clamped": 1,
+      "rejected": 1
+    },
+    "clamps_by_rule": {
+      "blast-radius": 1
+    },
+    "gate_clamps_by_guardrail": {},
+    "no_data": false
+  },
+  "cli_declines": {
+    "no_data": false,
+    "by_reason": {
+      "DorguCLIDeclined": 2,
+      "DorguCLINoTicket": 3,
+      "DorguCLITicketExpired": 1,
+      "DorguCLITicketMismatch": 1
+    },
+    "note": "..."
+  },
+  "not_measurable": [
+    {
+      "id": "A1",
+      "name": "External installs",
+      "reason": "a cluster cannot tell whether it is ours; read from partner reports"
+    },
+    {
+      "id": "A3",
+      "name": "Design partners",
+      "reason": "comes from the conversation log"
+    }
+  ]
+}
+```
+
+The example shortens the long text fields and lists only two of the `not_measurable` entries. These are the top-level fields and what they hold:
+
+| Field | Holds |
+|-------|-------|
+| `schema`, `generated_at`, `window` | The schema name, when the report ran, and the window as `since`, `start` and `end` |
+| `cluster` | Context only: no number is computed from it. `application_personas` is `null`, never `0`, when the personas could not be read, and `self_healing_modes` is `null` or empty when the ClusterPersonas could not be read |
+| `sources` | For each of `remediation_actions`, `incidents`, `personas`, `cluster_personas` and `events`: `ok`, `count`, and an `error` class when a read failed |
+| `input_errors` | One `{input, error}` entry per failed read. `error` is one of `forbidden`, `not_found`, `timeout`, `unparseable`, `error` |
+| `heal_accounting` | `total`, `completed`, `clean` and `safe_heals` (both `null` when they cannot be known), `no_data` with `reason`, `excluded` (a count per bucket, zeros included), and `heal_not_credited_by_reason` |
+| `tier_a` | `ns_safe_heals` (`safe_heals`, `clean_heals`, `no_data`, `reason`), `a2_active_cluster` (`active`, `proposals_decided`), `a5_review_depth` (`per_week`, `window_days`), `a6_approval_rate` (`approved`, `rejected`, `rate`, `too_few_decisions`, `band`), `a7_external_agent_share`, `decisions` and `notes` |
+| `tier_q` | `q1_time_to_heal` (`detect_to_proposal`, `proposal_to_decision`, `decision_to_applied`, `applied_to_verified`, each `n`, `p50_seconds`, `p90_seconds`, `no_data`), `q2_proposal_precision` (`decided`, `wrong`, `rate`, `rejections_by_reason`), `q3_llm_efficiency` (`plan_sources`), `q6_refusal_mix` (`proposals`, `rows[]` of `phase`, `stage`, `reason`, `count`, `share_of_proposals`, `flagged`, and `deferred_proposals`) |
+| `first_run_clamps` | `proposals_with_clamp`, `step_verdicts`, `clamps_by_rule`, `gate_clamps_by_guardrail`, `no_data` |
+| `cli_declines` | `by_reason` (event reason to count), `no_data`, and a `note` on the one-hour Event retention |
+| `not_measurable` | `{id, name, reason}` entries |
+
+<Warning>
+  **Check `no_data` before you read a number.** `clean`, `safe_heals`, a percentile or a rate is `null` when it cannot be known, and `no_data` is `true` with a `reason`. A script that treats `null` as `0` will report a failure to read as a fact.
+</Warning>
+
+### The operator line in the header
+
+The header prints the operator version only when the operator's image tag is a release version. A commit hash, `latest` or `dev` reads `Operator:  unreleased build <tag>`, so a build identifier is never shown as if it were a version. `cluster.operator_version` in the JSON keeps the raw tag.
+
+### Older operators
+
+Against an operator older than `v0.13.0`, which writes no tickets and no `HealCredited` record, the heal sections are `no data` with the operator version in the reason. The same is true when the operator version cannot be determined (for example an image pinned by digest, or a tag such as `latest`) and the window has completed actions with no `HealCredited` record. The report fails toward `no data`, not toward a measured zero.
+
+### Permissions
+
+The report reads, with the identity in your kubeconfig, `remediationactions`, `incidentmemories`, `applicationpersonas`, `clusterpersonas`, Events about RemediationActions, and Deployments (to read the operator's version). If a read is forbidden, it is listed in `input_errors` and the sections that depend on it say `no data`. The command needs `kubectl` on your `PATH`, like every `dorgu` command that talks to the cluster.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="How Dorgu decides" icon="route" href="/how-dorgu-decides">
+    The pipeline these numbers describe
+  </Card>
+  <Card title="dorgu remediation" icon="screwdriver-wrench" href="/cli/commands/remediation">
+    `reject --reason` feeds proposal precision
+  </Card>
+  <Card title="Metrics reference" icon="chart-line" href="/operator/reference/metrics">
+    The same events as Prometheus metrics
+  </Card>
+</CardGroup>

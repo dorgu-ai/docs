@@ -7,6 +7,8 @@ Vanilla Kubernetes restarts a crash-looping pod forever. It never asks *why*. Do
 
 Code detects. AI explains. A human approves.
 
+This page is the feature reference. For the path one proposal takes, what Dorgu refuses at each step and why, and where the checks stop, read [How Dorgu decides](/how-dorgu-decides).
+
 ## The loop
 
 ```mermaid
@@ -24,8 +26,8 @@ flowchart LR
 | Detect | Health-check reconciler | Signals |
 | Diagnose | Rule-based provider, optionally AI-enhanced | Root cause + confidence, stored on `IncidentMemory` |
 | Propose | Rule-based proposer, optionally the AI planner | `RemediationAction` with an ordered `steps[]` plan |
-| Approve | You, via `dorgu remediation approve` | `phase: Approved` |
-| Heal | Operator (persona spec) + CLI (Deployment, **only if unmanaged**) | The pod recovers, or you get owner-shaped instructions |
+| Approve | You, via `dorgu remediation approve`. The operator re-checks the approval on the live cluster and, if it clears, issues a short-lived [apply ticket](/how-dorgu-decides#the-approval-time-re-check-and-the-apply-ticket) | `phase: Approved`, then `Ticketed` |
+| Heal | Operator (persona spec, from the ticket) + CLI (Deployment, **only if unmanaged**, exactly the ticket) | The pod recovers, or you get owner-shaped instructions |
 | Remember | Operator | `IncidentMemory.spec.resolution` with the outcome |
 
 <Warning>
@@ -73,7 +75,7 @@ The health-check reconciler runs on a fixed interval — 60 seconds by default, 
 
 | Category | Signals |
 |----------|---------|
-| Pod | `OOMKilled`, `CrashLoopBackOff`, `ImagePullBackOff`, `PodEvicted`, `PodPendingLong` (5 min), `ProbeFailure`, `ContainerHighRestarts` |
+| Pod | `OOMKilled`, `CrashLoopBackOff`, `ImagePullBackOff`, `PodEvicted`, `PodPendingLong` (5 min), `ProbeFailure`, `ContainerHighRestarts`, and, from v0.13.0, `ReadinessNotReady`, `LivenessRestarts`, `RestartLoop` |
 | Resource | `CPUSaturationHigh` / `Critical`, `MemorySaturationHigh` / `Critical`, `CPUUsageHigh`, `MemoryUsageHigh` |
 | Node | `NodeNotReady`, `NodeMemoryPressure`, `NodeDiskPressure`, `NodePIDPressure`, `NodeNetworkUnavailable` |
 | Control plane | `APIServerUnhealthy`, `ETCDUnhealthy`, `SchedulerUnhealthy`, `ControllerManagerUnhealthy`, `ComponentUnhealthy` |
@@ -81,6 +83,38 @@ The health-check reconciler runs on a fixed interval — 60 seconds by default, 
 <Note>
   **OOM detection needs no metrics-server.** `OOMKilled` is read straight from the container's current or last termination state in the pod status, so the most valuable signal works on a bare cluster. Metrics-server only adds the container-level usage and saturation signals.
 </Note>
+
+### Probe failures and restart loops
+
+New in **operator v0.13.0**. Three signals catch faults that a crash-loop detector never sees. All three are `warning`, category `health`, action `investigate` (advice, with no automatic change), and go through the same diagnosis and gate as every other incident.
+
+| Signal | Raised when | Tune with |
+|--------|-------------|-----------|
+| `ReadinessNotReady` | A running container stays not Ready for the threshold. Counted from the container start plus the readiness probe's `initialDelaySeconds`. Kubelet `Unhealthy` events are supporting evidence. | `healthCheck.readinessThreshold` (default `2m`) |
+| `LivenessRestarts` | A container restarted `count` times within the window, and the kubelet's own "failed liveness probe, will be restarted" `Killing` events are in that window, whatever the exit code. A liveness kill is a SIGTERM first, so an application that handles it exits `0`. | `healthCheck.livenessRestarts.count` (default `2`), `.window` (default `10m`) |
+| `RestartLoop` | The same restart count with no liveness-kill event, and an `Error` or SIGKILL exit. The cause is unknown, because an application that crashes quickly looks exactly the same. | the same two values |
+
+`RestartLoop` and `LivenessRestarts` also read a container **between runs**. A container that exits right after it starts is `Running` for a few seconds of each back-off cycle and sits in `Terminated` the rest of the time, so a detector that needed a Running container waited for CrashLoopBackOff. Reading the current termination detects it in about a minute in testing on EKS (about two minutes before). For a pod younger than the restart window (10 minutes by default) every restart happened inside the window, so its restart count is the delta on every cycle. An older pod's lifetime count only seeds the history.
+
+The restart delta is observed across cycles. After an operator restart a container is seeded on first sight, because its lifetime restart count proves nothing about the window. At least `count` kill events in the window are enough on their own.
+
+One container is one finding at a time: `CrashLoopBackOff` or a live `OOMKilled` on the container wins, and `LivenessRestarts` and `RestartLoop` win over `ReadinessNotReady`. A container whose startup probe has not passed is never reported, so an app that legitimately takes a long time to start should have a `startupProbe` or a longer threshold.
+
+<Warning>
+  **Expect new incidents after upgrading** on workloads that were quietly unhealthy. `--liveness-restart-window` must be at least twice `--health-check-interval`, because the restart history is one observation per cycle. The operator refuses to start with a clear error otherwise.
+</Warning>
+
+A container that was OOM-killed, and has been Running and Ready since for 2 minutes (or twice the health-check interval, if longer), is no longer an `OOMKilled` signal. The pod keeps its last termination state until it is replaced, and that used to bring the incident and a model call back every cycle.
+
+**Limits of probe detection.** An exit `0` after a liveness kill is detected only with the kubelet's events, which Kubernetes keeps for about an hour. A kill by a failing startup probe is not matched. CPU throttling is not detected at all, because it needs a metrics source (cAdvisor or Prometheus) that the operator does not read.
+
+### One fault, one incident
+
+A fault that changes shape is **one** incident. A container that goes not Ready, is restarted by the kubelet, enters CrashLoopBackOff and is then OOM-killed opens one incident that escalates, not four. Identity is the application, the container and the family, from mildest to worst: `ReadinessNotReady`, `RestartLoop`, `LivenessRestarts`, `CrashLoopBackOff`, `OOMKilled`. A worse signal escalates the incident, a milder one while the worse is still seen is folded in, and a milder one after the worse has cleared de-escalates it. A pod replaced by a rollout still merges. Different containers, sidecars included, are different incidents.
+
+A pod whose image cannot be pulled is one incident too. It stays `Pending`, so it used to cross the long-pending threshold and open a second incident. `PodPendingLong` is no longer raised for a pod with a container waiting on `ImagePullBackOff`, `ErrImagePull` or `InvalidImageName`, and if both still show in one cycle the pending diagnosis folds into the image-error incident while that error is current.
+
+A fault that comes back after its incident resolved opens a **new** incident (`<first-name>-r<N>`) with its own first-seen time, and never folds into the resolved one. After `healthCheck.recurrence.cap` recurrences (default 3) within `healthCheck.recurrence.window` (default 24 hours) the latest incident is reopened instead and marked `Flapping`. Resolved incidents older than `healthCheck.resolvedRetention` (default 30 days) are pruned, except the newest of each fault. How a `Pending` proposal is superseded when an incident escalates is in [How Dorgu decides](/how-dorgu-decides#recurrence-escalation-and-pruning).
 
 ### One application at a time
 
@@ -191,30 +225,32 @@ Every proposal passes the safety checker before it is created.
 | Verdicts are recorded | Whenever a guardrail rules on a field, what it decided is written to `spec.steps[].safety` as structured data, in Dorgu's own numbers. See [guardrail verdicts as data](#guardrail-verdicts-as-data). |
 | Workload ownership | The CLI patches the Deployment only when `workloadRef.managedBy` is `unmanaged`. See [the ownership model](/ownership-model). |
 | Rate limit | **5 remediations per persona per hour** (override with `policies.selfHealing.maxRemediationsPerHour`) |
-| Concurrency | **One active remediation per persona** — a second is skipped while one is `Approved`, `Applying`, or `Verifying` |
-| Failure cooldown | 30 minutes after a `Failed` remediation for the same persona |
+| Concurrency | **One active remediation per persona.** Another incident's fix on another field is refused while one is `Approved`, `Ticketed`, `Applying` or `Verifying`. A proposal that repeats an outstanding one, or touches the same field, is a deferral, not a refusal. |
+| Failure cooldown | 30 minutes after a `Failed` or `RolledBack` remediation for the same persona. A refusal at approval starts none. |
 | Rejection cooldown | A rejected remediation suppresses re-proposal for the same incident and target for **1 hour**, or until the signal materially changes |
 | Namespace deny list | `kube-system` and the operator's own namespace always (`dorgu-system` with the documented install); plus anything in the chart's `safety.excludedNamespaces` or the ClusterPersona's `policies.selfHealing.excludeNamespaces`. See [protected namespaces](#protected-namespaces). |
-| Approval | **Required by default.** Every proposal is created with `approval.required: true` and phase `Pending`. |
+| Approval | **Required by default.** Every proposal is created with `approval.required: true` and phase `Pending`. A proposal nobody decides within 24 hours (`remediation.pendingTTL`) becomes `Expired`. At approval the gate runs again on the live cluster and issues an [apply ticket](/how-dorgu-decides#the-approval-time-re-check-and-the-apply-ticket). |
 | Deduplication | One remediation per incident, and one per persona-plus-target — so an OOM that also trips a crash-loop yields **two incidents but one fix** |
 | Rollback | Automatic. The operator restores `prePatchState` when verification finds the health degraded. |
 
 ### Protected namespaces
 
-Dorgu never proposes a remediation for a persona in a protected namespace. Incidents there are still detected and diagnosed; only the proposal is skipped, and the operator logs `safety check failed: [deny-list ...]` when it does.
+Dorgu never proposes a remediation for a persona in a protected namespace. From operator v0.13.0, **pod detection skips these namespaces as well**: a pod that fails there raises no incident at all, where before it raised one that was recorded and never remediated. A proposal that reaches the gate for such a namespace is refused, and the refusal is recorded as `Guardrails/deny-list`.
 
 Two namespaces are always protected: `kube-system`, and the namespace the operator itself runs in. The operator reads its namespace from `POD_NAMESPACE`, which the chart sets from the downward API, so it protects wherever you installed it rather than a fixed name. Add more in either place:
 
 ```bash
 # Chart value, new in 0.12.0
 helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  -n dorgu-system --reuse-values \
+  -n dorgu-system --reset-then-reuse-values \
   --set 'safety.excludedNamespaces={payments,ingress-nginx}'
 
 # Or on the ClusterPersona, alongside the rest of the self-healing policy
 kubectl patch clusterpersona dorgu-cluster --type merge \
   -p '{"spec":{"policies":{"selfHealing":{"excludeNamespaces":["payments"]}}}}'
 ```
+
+`--reset-then-reuse-values` needs Helm 3.14 or newer. It keeps the values you set and also picks up the defaults of any value a newer chart added, which plain `--reuse-values` does not. The [upgrade guide](/upgrade-guide#step-3-upgrade-the-operator) uses it for the 0.13.0 upgrade.
 
 The chart value belongs to whoever installs the operator; the ClusterPersona field belongs to whoever manages cluster policy. Dorgu honours the union of both.
 
@@ -293,7 +329,7 @@ Approval starts a timed verification, not an instant success.
 
 <Steps>
   <Step title="Apply">
-    The operator patches the ApplicationPersona spec and moves to `Applying`, recording `appliedAt`.
+    The operator applies the apply ticket to the ApplicationPersona spec and moves to `Applying`, recording `appliedAt`. The approval is `Ticketed` for the moment between the gate clearing it and the write.
   </Step>
   <Step title="Wait">
     It waits out `spec.rollback.healthCheckAfter` — **10 minutes** by default — then moves to `Verifying`.
@@ -302,7 +338,7 @@ Approval starts a timed verification, not an instant success.
     It re-runs the whole detection engine and asks two questions: is the original signal still present for this persona, and are there new critical signals?
   </Step>
   <Step title="Settle">
-    Clean → `Completed`, and the incident is marked `Resolved` with the outcome and duration. Degraded → the `prePatchState` is restored and the action becomes `RolledBack`. `Unknown` → retried twice, one minute apart, then `Failed`.
+    Clean → `Completed`, and the incident is marked `Resolved` with the outcome and duration. Degraded → the persona fields Dorgu wrote are restored from the baseline the gate recorded and the action becomes `RolledBack`. `Unknown` → retried twice, then rolled back. A verification where any collector failed is `Unknown`, never `Healthy`. If the rollback itself cannot run, the action is `Failed` and says the change is still applied.
   </Step>
 </Steps>
 
@@ -331,7 +367,7 @@ spec:
 
 | Mode | What happens |
 |------|--------------|
-| `observe` | Detect, diagnose, and record an `IncidentMemory`. **No `RemediationAction` is created** — the operator logs `selfHealing.mode=observe — proposal suppressed` and stops. The gate runs ahead of the AI planner, so observe costs no API calls. |
+| `observe` | Detect, diagnose, and record an `IncidentMemory`. **No `RemediationAction` is created.** The operator logs `selfHealing.mode=observe: proposal suppressed` and stops. The gate runs ahead of the AI planner, so observe costs no API calls. An approval that arrives after the mode became `observe` is refused (`SelfHealingMode`), and so is the CLI's patch. |
 | `propose` | **Default.** Also propose a `RemediationAction` for every actionable incident, which a human approves before anything is applied. |
 | `auto-approve` | **Not implemented.** Accepted for forward compatibility and treated exactly like `propose`, with a warning logged on every proposal. |
 
@@ -469,7 +505,7 @@ Two rules bound it. Only personas in the **signal's own namespace** are consider
 
     ```bash
     helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-      -n dorgu-system --reuse-values --set healthCheck.enabled=true
+      -n dorgu-system --reset-then-reuse-values --set healthCheck.enabled=true
     ```
 
     Also check that all five CRDs are present. Detection cannot record anything without `incidentmemories.dorgu.io`. See [installation](/operator/installation#verify-installation).
@@ -586,7 +622,7 @@ Two rules bound it. Only personas in the **signal's own namespace** are consider
 
     ```bash
     helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-      -n dorgu-system --reuse-values --set aiRemediation.enabled=false
+      -n dorgu-system --reset-then-reuse-values --set aiRemediation.enabled=false
     ```
 
     An advisory plan that legitimately has nothing to apply is a different thing and says so plainly. See [advisory plans](/cli/commands/remediation#advisory-plans).

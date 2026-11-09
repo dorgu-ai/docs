@@ -7,7 +7,11 @@ description: Review, approve, and apply the fixes Dorgu proposes for detected in
 
 The `dorgu remediation` command group is how you work with `RemediationAction` resources — the fixes the Dorgu Operator proposes after it detects and diagnoses an incident. You list them, read the proposed plan as a diff, then approve or reject.
 
-Approving does two things: it records your decision on the `RemediationAction`, and where Dorgu is allowed to, it heals the running workload. The operator patches the `ApplicationPersona` (desired state); the CLI patches the `Deployment` with your credentials. See [Self-healing](/operator/features/self-healing) for the full loop.
+Approving does two things: it records your decision on the `RemediationAction`, and where Dorgu is allowed to, it heals the running workload. The operator re-checks the approval on the live cluster and issues a short-lived **apply ticket**. It applies the ticket to the `ApplicationPersona` (desired state), and the CLI patches the `Deployment` with your credentials, using exactly what the ticket says. See [How Dorgu decides](/how-dorgu-decides) for the path and [Self-healing](/operator/features/self-healing) for the loop.
+
+<Warning>
+  **Needs CLI v0.14.0 together with operator v0.13.0.** An older CLI ignores the apply ticket and patches from the plan with none of the new checks. A `v0.14.0` CLI against an older operator refuses to patch, because no ticket ever arrives. Upgrade the CLI first: [upgrade guide](/upgrade-guide).
+</Warning>
 
 <Warning>
   **Dorgu will not patch a Deployment that Helm, ArgoCD, or Flux owns.** `approve` and `heal` read `spec.workloadRef` and decline for every `managedBy` except `unmanaged`, exiting **`4`** (`ExitDeclined`). Nothing is approved and nothing changes; instead you get the owner named and the fix restated as what to change in your source of truth.
@@ -24,8 +28,8 @@ Approving does two things: it records your decision on the `RemediationAction`, 
 | Code | Meaning |
 |------|---------|
 | `0` | The command did what it was asked, including a `--no-heal` approval |
-| `1` | Failure: unreachable cluster, missing kubeconfig, no `kubectl`, a failed API call, wrong phase. **Also the patched-but-unrecorded case below**, where the workload *was* changed |
-| `4` | **Declined.** Dorgu understood the plan, could see exactly what to do, and chose not to write because something else owns the workload. Nothing failed and nothing changed. |
+| `1` | Failure: unreachable cluster, missing kubeconfig, no `kubectl`, a failed API call, wrong phase, **no usable apply ticket** (none within 30 seconds, an expired one, or an operator older than v0.13.0), or an approval that did not stand because the operator expired or superseded the action. **Also the patched-but-unrecorded case below**, where the workload *was* changed |
+| `4` | **Declined.** Dorgu understood the plan and chose not to write: something else owns the workload, or the operator's gate refused the approval on the cluster as it is now (`GateRefusedAtApproval`, with the reason shown). Nothing failed and nothing was applied. |
 
 <Warning>
   **`4` is not a failure, and a wrapper that treats every non-zero exit as breakage will now misreport it.** Update the wrapper to accept `4`, or use `dorgu remediation approve <name> -n <ns> --no-heal`, which records the decision without a workload patch and exits `0`.
@@ -43,28 +47,32 @@ Approving does two things: it records your decision on the `RemediationAction`, 
 flowchart LR
     P["Pending"] -->|"approve"| A["Approved"]
     P -->|"reject"| RJ["Rejected"]
+    P -->|"24 h, or superseded"| EX["Expired"]
+    A -->|"gate refuses"| F0["Failed"]
     A -->|"nothing to apply"| AK["Acknowledged"]
-    A -->|"operator patches persona"| AP["Applying"]
+    A -->|"gate clears: ticket"| T["Ticketed"]
+    T -->|"operator applies the ticket"| AP["Applying"]
     AP -->|"verification window"| V["Verifying"]
     V -->|"signal cleared"| C["Completed"]
-    V -->|"health degraded"| RB["RolledBack"]
+    V -->|"degraded or unknown"| RB["RolledBack"]
     V -->|"apply or rollback error"| F["Failed"]
 ```
 
 | Phase | What it means |
 |-------|---------------|
-| `Pending` | Waiting for your decision. The operator takes no action. |
-| `Approved` | You approved it. The operator applies the patch to the ApplicationPersona. |
+| `Pending` | Waiting for your decision. The operator takes no action. After 24 hours (`remediation.pendingTTL`) it becomes `Expired`. |
+| `Approved` | You approved it. The operator re-runs the gate on the live cluster. |
+| `Ticketed` | **New in operator v0.13.0.** The gate cleared the approval and the operator wrote `status.applyTicket`, valid for 10 minutes. Normally visible only as a condition, because the operator applies the ticket in the same reconcile. |
 | `Acknowledged` | You approved a plan that had nothing to apply. The approval is recorded, the operator changed nothing, and the incident is marked `acknowledged` rather than resolved, because nothing was fixed. |
-| `Applying` | The patch landed. The operator is waiting out the verification window. |
+| `Applying` | The ticket was applied to the persona. The operator is waiting out the verification window. |
 | `Verifying` | The operator is re-running detection to check whether the original signal cleared. |
-| `Completed` | Verification passed — the signal is gone and no new critical signals appeared. |
-| `RolledBack` | Verification found the health degraded, so the operator restored `prePatchState`. |
-| `Failed` | The apply failed, the rollback failed, or verification returned `Unknown` after 2 retries. |
+| `Completed` | Verification passed: the signal is gone and no new critical signals appeared. Whether Dorgu is credited with the heal is a separate record: see [heal credit](/how-dorgu-decides#heal-credit). |
+| `RolledBack` | Verification found the health degraded (or could not be determined after retries), so the operator restored the persona fields it wrote. The Deployment is not rolled back by the operator. |
+| `Failed` | The gate refused at approval (`Applied=False`, reason `GateRefusedAtApproval`, nothing applied), the ticket was refused at apply, or the apply or the rollback failed. |
 | `Rejected` | You rejected it. |
-| `Expired` | The approval deadline passed. |
+| `Expired` | Terminal, nothing applied, no cooldown. The reason is on the `Expired` condition: `ApprovalTimedOut` (nobody decided within 24 hours, or the approval deadline passed), `Superseded` (the incident escalated to a worse shape and this proposal answered a milder one), or `PredatesGate` (the proposal was made by an operator older than v0.13.0, so it cannot be approved; the operator proposes again). |
 
-Two condition reasons are worth knowing, both on the `Applied` condition. `AdvisoryOnly` accompanies `Acknowledged`. `PreconditionRejected` marks a plan the executor refused before touching the cluster, and is deliberately excluded from the 30-minute failure cooldown, since nothing in the cluster actually went wrong.
+Two condition reasons are worth knowing, both on the `Applied` condition. `AdvisoryOnly` accompanies `Acknowledged`. `PreconditionRejected` marks a plan the executor refused before touching the cluster, and `GateRefusedAtApproval` marks one the gate refused when you approved it. Neither starts the 30-minute failure cooldown, since nothing in the cluster actually went wrong.
 
 <Warning>
   `Completed` only arrives **after the verification window** — 10 minutes by default (`spec.rollback.healthCheckAfter`). Your pod recovers within seconds of `approve`, but the remediation sits in `Applying` and then `Verifying` for the rest of that window. This is not stuck. It is the operator waiting long enough to be able to tell a real fix from a temporary one, so it can auto-roll-back if the health regresses.
@@ -80,7 +88,7 @@ Two condition reasons are worth knowing, both on the `Applied` condition. `Advis
 dorgu remediation list [flags]
 ```
 
-Lists `RemediationAction` resources. By default it shows only active ones — `Pending`, `Approved`, `Applying`, `Verifying`, and `Failed`. Use `--all` to include `Completed`, `RolledBack`, `Rejected`, and `Expired`.
+Lists `RemediationAction` resources. By default it shows only active ones: `Pending`, `Approved`, `Ticketed`, `Applying`, `Verifying`, and `Failed`. Use `--all` to include `Completed`, `Acknowledged`, `RolledBack`, `Rejected`, and `Expired` (a superseded proposal is `Expired`).
 
 ### Flags
 
@@ -90,7 +98,7 @@ Lists `RemediationAction` resources. By default it shows only active ones — `P
 | `--phase` | string | all | Filter by exact phase (`Pending`, `Approved`, `Applying`, `Verifying`, `Completed`, …) |
 | `--all` | bool | `false` | Include completed, rolled-back, rejected, and expired remediations |
 | `--limit` | int | `50` | Maximum number of remediations to show |
-| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
+| `--kubeconfig` | string | `kubectl`'s own resolution: `$KUBECONFIG`, then `~/.kube/config` | Path to kubeconfig file |
 | `--json` | bool | `false` | Output as JSON (inherited global flag) |
 
 ### Example output
@@ -172,7 +180,7 @@ Shows the full proposal: the target, the workload and its owner, the confidence,
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-n, --namespace` | string | **required** | Namespace of the remediation |
-| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
+| `--kubeconfig` | string | `kubectl`'s own resolution: `$KUBECONFIG`, then `~/.kube/config` | Path to kubeconfig file |
 | `--json` | bool | `false` | Output the raw resource as JSON (inherited global flag) |
 
 ### Example output
@@ -224,7 +232,7 @@ Rollback:
 
 Actions:
   dorgu remediation approve fix-oom-api-server -n production
-  dorgu remediation reject fix-oom-api-server -n production --reason "..."
+  dorgu remediation reject fix-oom-api-server -n production --reason <wrong-diagnosis|too-risky|not-now|duplicate|not-needed|other> [--note "..."]
 ```
 
 Each step line reads `[order] type (risk; mode): description`, with the rationale indented underneath, an optional `Run:` command, and a unified diff of `prePatchState → patch` where the step carries one.
@@ -278,7 +286,7 @@ chart-specific, commonly under `resources`), then run your usual helm upgrade.
 
 Actions:
   dorgu remediation approve fix-oom-frontend -n apps --no-heal   (record the decision, patch no workload)
-  dorgu remediation reject fix-oom-frontend -n apps --reason "..."
+  dorgu remediation reject fix-oom-frontend -n apps --reason <wrong-diagnosis|too-risky|not-now|duplicate|not-needed|other> [--note "..."]
 ```
 
 Once the action leaves `Pending`, that action block is gone, so the Deployment change block carries the fact instead: `Dorgu did not apply this: <owner> owns this Deployment.`
@@ -376,7 +384,7 @@ This plan is advisory: nothing in it can be applied for you.
 Carry out the steps above yourself. Nothing changes in the cluster until you do.
 
 Actions:
-  dorgu remediation reject fix-image-web -n demo --reason "..."
+  dorgu remediation reject fix-image-web -n demo --reason <wrong-diagnosis|too-risky|not-now|duplicate|not-needed|other> [--note "..."]
 ```
 
 Approving one anyway is safe: it records the approval, changes nothing, and settles the action as `Acknowledged`. It used to be offered `approve` as its suggested next action, and following that advice failed the remediation and put the app into a 30-minute cooldown.
@@ -412,23 +420,57 @@ Approves a `Pending` remediation and, when Dorgu owns the write, heals the workl
     Before anything is written: the [protected-context guard](#protected-contexts), the remediation plan, **the ownership check**, the target Deployment, the container, and the patch. If any of it fails, nothing is approved. On an **owned** workload this is where the command stops: it prints the refusal and exits `4`, having written neither a Deployment patch nor a status patch.
   </Step>
   <Step title="The CLI records your decision">
-    It patches the RemediationAction status subresource to `phase: Approved`, with `approvedBy: cli-user` and the current timestamp.
+    It patches the RemediationAction status subresource to `phase: Approved`, with `approvedBy: cli-user` and the current timestamp. The write carries the `resourceVersion` the CLI read. If anything wrote to the action in between, the CLI re-reads it. A status-only write is retried on the new version. If the spec changed since you read the plan (its `generation` moved), the CLI refuses the retry and tells you to re-run `dorgu remediation diff`, because the approval would land on a plan you never saw. If someone else's approval landed first and stands (`Approved`, `Ticketed`, or `Applying` with a ticket), it says `already approved by another actor`, writes nothing, and exits `0` without healing. Run `dorgu remediation heal` to apply it. "Approved" is printed only after a short settle, once the operator still has the approval standing. If the operator expired or superseded the action in that moment, the CLI says what it became and exits `1`.
   </Step>
-  <Step title="The operator patches the ApplicationPersona">
-    Seeing `Approved`, the operator applies the JSON merge patch to the persona's `spec`, the app's desired-state record, then moves the action to `Applying`. It never touches your Deployment, and it cannot: its ClusterRole has no write verbs on `apps/deployments`. See [security and permissions](/security-and-permissions).
+  <Step title="The operator re-checks the approval and writes a ticket">
+    The operator runs its gate again on the live cluster: the same workload, an unedited spec, current policy, current guardrail arithmetic. If it clears, it writes `status.applyTicket` (the Deployment's UID and generation, the container, the exact patch, every verdict, and an expiry **10 minutes** out) and the phase becomes `Ticketed`. If it refuses, the action ends `Failed` with `GateRefusedAtApproval` and nothing is applied. See [the approval-time re-check](/how-dorgu-decides#the-approval-time-re-check-and-the-apply-ticket).
   </Step>
-  <Step title="The CLI heals the workload">
-    The CLI translates the approved resource change into an equivalent strategic-merge patch on the matching Deployment and applies it with **your** credentials, so the pod actually restarts with the new limits. Use `--no-heal` to skip this.
+  <Step title="The operator applies the ticket to the ApplicationPersona">
+    It applies the ticket's patch to the persona's `spec`, the app's desired-state record, then moves the action to `Applying`. It never touches your Deployment, and it cannot: its ClusterRole has no write verbs on `apps/deployments`. See [security and permissions](/security-and-permissions).
+  </Step>
+  <Step title="The CLI waits for the ticket, then heals the workload">
+    The CLI waits up to **30 seconds** for the ticket (a spinner on a terminal, one line when piped). It uses only a ticket the operator issued at or after your approval was recorded, with at most ten minutes of life. It then patches the matching Deployment with **your** credentials, with the ticket's change in the ticket's container, and **nothing from the plan you previewed**. If the ticket differs from the preview, it says so. Use `--no-heal` to skip this.
   </Step>
   <Step title="The CLI records the patch">
-    A `WorkloadPatched` condition is stamped on the RemediationAction naming the Deployment, container, and fields it set, so the record and the cluster agree. **New in CLI v0.12.0.** The phase is already `Approved` by this point from step 2, so only the condition is written. See [what the heal records](#what-the-heal-records).
+    A `WorkloadPatched` condition is stamped on the RemediationAction naming the Deployment, container, and fields it set, so the record and the cluster agree. The phase is already `Approved` or later by this point, so only the condition is written. See [what the heal records](#what-the-heal-records). The operator uses that condition when it decides [heal credit](/how-dorgu-decides#heal-credit).
   </Step>
 </Steps>
+
+<Warning>
+  **The CLI refuses to patch, and applies nothing, when:** no ticket arrives within 30 seconds (including against an operator older than v0.13.0, with an upgrade hint); the ticket has expired; the ticket was already on the action before you approved; the Deployment's UID is not the one the ticket names, or its `metadata.generation` has moved since; `--container` disagrees with the ticket; the cluster's self-healing mode is `observe` or cannot be read; or the live Deployment carries Helm, Argo CD or Flux stamps, a controller owner reference or a GitOps field manager, whatever the proposal recorded. It re-reads the action, the Deployment and the ClusterPersona right before it writes, after any confirmation prompt. It never falls back to patching from the plan.
+</Warning>
+
+When the action is not approved, the CLI says so and why. A proposal the operator superseded or expired is phase `Expired`, and the sentence follows the `Expired` condition's reason:
+
+```
+✗ fix-oom-api-server is NOT approved (phase Expired): the operator superseded it with a newer proposal for the same fault, which is worse than the one it answered. Run `dorgu remediation list` for the current one.
+ℹ Nothing was applied to the persona or the workload.
+```
+
+| Reason | What the CLI says |
+|--------|-------------------|
+| `Superseded` | The operator superseded it with a newer proposal for the same fault, which is worse than the one it answered. Run `dorgu remediation list` for the current one. |
+| `ApprovalTimedOut` | The operator expired it: it waited in `Pending` longer than its time-to-live. Run `dorgu remediation list`; the incident may have a fresh proposal. |
+| `PredatesGate` | It predates the operator's gate (it was made by an older operator), so it cannot be approved. The operator proposes again. See below. |
+
+An approval of a proposal that predates the gate is shown as the gate's refusal (`NoProposalRecord`, exit `4`) with a `Note:` line carrying the operator's own account, and not as "ended in phase Expired".
+
+When the operator's gate refuses the approval, the CLI shows the reason the operator persisted and exits `4`:
+
+```
+The operator's gate refused this approval on the cluster as it is now.
+  Reason:  BlastRadius
+  Detail:  resource change for spec.resources.limits.memory exceeds maximum: ...
+
+Nothing was applied to the persona or the workload.
+```
+
+The reason is a stable name such as `BlastRadius`, `WorkloadGone`, `NoProposalRecord`, `SpecChanged`, `SelfHealingMode` or `Concurrent`. It is also on the action as the reason of its `GateRefused` condition.
 
 Advisory steps (`restart`, `scale`, `config-change`, `manual`, and any `persona-update` that is not a resource change) are printed as numbered manual instructions. They are never executed.
 
 <Warning>
-  **Approval is withheld along with the patch.** On an owned workload the gate sits in the preflight, ahead of any write, so `approve` records nothing at all.
+  **Approval is withheld along with the patch.** On an owned workload the ownership check sits in the preflight, ahead of any write, so `approve` records nothing at all.
 
   That is deliberate rather than incidental. Approving is what tells the operator to patch the persona and start the verification clock, so approving a change the CLI will not apply would leave the persona at 128Mi, the workload at 32Mi, and a ten-minute verification window running over a fix that was never coming. Use `--no-heal` when you want the decision recorded and intend to apply the change at its source yourself.
 </Warning>
@@ -472,13 +514,13 @@ Read [the ownership model](/ownership-model) for how ownership is detected and w
 |------|------|---------|-------------|
 | `-n, --namespace` | string | required unless `--next` | Namespace of the remediation |
 | `--next` | bool | `false` | Approve the oldest pending remediation instead of naming one |
-| `--reason` | string | `""` | Optional approval reason, echoed in the success message |
+| `--reason` | string | `""` | Optional approval note, echoed in the success message. Free text. (`reject --reason` is different: it takes a fixed list.) |
 | `--heal` | bool | `true` | After approval, apply the resource change to the workload. Only ever acts on an `unmanaged` workload. |
 | `--no-heal` | bool | `false` | Skip the workload heal; only patch the RemediationAction status |
 | `--workload` | string | auto-discovered | Explicit Deployment name. Must **match** the workload recorded in `spec.workloadRef`; it cannot redirect the patch elsewhere. |
 | `--container` | string | the container the operator observed | Explicit container name to patch |
 | `--yes` | bool | `false` | Skip the heal confirmation prompt |
-| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
+| `--kubeconfig` | string | `kubectl`'s own resolution: `$KUBECONFIG`, then `~/.kube/config` | Path to kubeconfig file |
 
 `--heal` and `--no-heal` are mutually exclusive.
 
@@ -519,7 +561,7 @@ dorgu remediation approve fix-oom-api-server -n production --container app
 
 ### Recording a decision without a patch
 
-`--no-heal` is how you say "I have read this, I agree, and I will apply it myself". It records `phase: Approved`, lets the operator patch the persona spec, skips the Deployment patch, and exits **`0`**.
+`--no-heal` is how you say "I have read this, I agree, and I will apply it myself". It records `phase: Approved`, lets the operator re-check, issue a ticket and patch the persona spec, skips the Deployment patch, and exits **`0`**.
 
 It is the intended path in three situations: an owned workload, a GitOps-managed persona, and any time you would rather apply the change through your own pipeline.
 
@@ -545,19 +587,39 @@ Only `Pending` remediations can be approved. Anything else exits with an error n
 dorgu remediation reject <name> -n <namespace> [flags]
 ```
 
-Moves a remediation to `Rejected`. Works from `Pending` or `Approved` — any other phase is refused.
+Moves a remediation to `Rejected`. Works from `Pending` or `Approved`: any other phase is refused.
 
 ### Flags
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-n, --namespace` | string | **required** | Namespace of the remediation |
-| `--reason` | string | `""` | Rejection reason — optional, but record it |
-| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
+| `--reason` | string | `""` | Why, from a fixed list: `wrong-diagnosis`, `too-risky`, `not-now`, `duplicate`, `not-needed`, `other`. Optional, but record it. |
+| `--note` | string | `""` | A sentence of context stored with the reason. **Required with `--reason other`.** |
+| `--kubeconfig` | string | `kubectl`'s own resolution: `$KUBECONFIG`, then `~/.kube/config` | Path to kubeconfig file |
+
+<Warning>
+  **Breaking in CLI v0.14.0: `--reason` is a fixed list, not free text.** `--reason "will handle manually"` is now an error that lists the valid values. Put the sentence in `--note` and use `--reason other`. A script that passed free text has to change. Leaving `--reason` out still rejects.
+</Warning>
+
+| Reason | Use it when |
+|--------|-------------|
+| `wrong-diagnosis` | Dorgu misread what is wrong. **The only reason that counts against proposal precision** in [`dorgu report`](/cli/commands/report). |
+| `too-risky` | The change is right but not safe to make here |
+| `not-now` | The fix is right but this is the wrong time (a peak, a freeze, a deploy in flight) |
+| `duplicate` | The same fix is already proposed or applied |
+| `not-needed` | There is nothing to fix, or it fixed itself |
+| `other` | None of the above. Requires `--note`. |
 
 ```bash
-dorgu remediation reject fix-oom-api-server -n production --reason "handling in the 1.4 release instead"
+dorgu remediation reject fix-oom-api-server -n production --reason wrong-diagnosis
+dorgu remediation reject fix-oom-api-server -n production --reason too-risky --note "peak traffic"
+dorgu remediation reject fix-oom-api-server -n production --reason other --note "handling in the 1.4 release instead"
 ```
+
+The reason is recorded on the RemediationAction as a `RejectionReason` status condition, written in the same patch that sets the phase, so a rejection never exists without it. The condition's reason is the CamelCase of the flag (`WrongDiagnosis`, `TooRisky`, and so on) and its message is the note. Nothing parses the note.
+
+A rejection holds the same fix for the same incident for one hour. A rejection of a milder shape does not hold a strictly worse shape of the same fault. See [How Dorgu decides](/how-dorgu-decides#the-gate-six-stages).
 
 Rejecting is also a safety gate: `dorgu remediation heal` refuses to run against a rejected remediation.
 
@@ -573,7 +635,9 @@ dorgu remediation heal <name> -n <namespace> [flags]
 
 Applies an approved remediation's resource change to the workload on its own, then [records that it did](#what-the-heal-records). `approve` runs this for you unless you passed `--no-heal`, so reach for `heal` when you deferred the apply, or when a previous heal failed and you want to retry it.
 
-It is idempotent, which is what makes re-running it the fix for a heal that patched but could not record.
+**`heal` is not an approval.** It applies the operator's [apply ticket](/how-dorgu-decides#the-approval-time-re-check-and-the-apply-ticket), not the plan, and a ticket exists only for an action a human approved. Healing a `Pending` remediation is refused: approve it first. It works only while the operator still holds the action in `Approved`, `Ticketed` or `Applying`, and the ticket lives 10 minutes. `Applying` is the operator's verification window, so after `approve --no-heal` you have that long. Once the action is `Verifying` or `Completed`, `heal` is refused, because the operator's verdict would be about a workload nobody changed. Apply the change yourself instead.
+
+Within those limits it is idempotent, which is what makes re-running it the fix for a heal that patched but could not record.
 
 ### Flags
 
@@ -583,13 +647,16 @@ It is idempotent, which is what makes re-running it the fix for a heal that patc
 | `--workload` | string | auto-discovered | Explicit Deployment name. Must match the workload recorded in `spec.workloadRef`. |
 | `--container` | string | the container the operator observed | Explicit container name to patch |
 | `--yes` | bool | `false` | Skip the confirmation prompt |
-| `--kubeconfig` | string | `~/.kube/config` | Path to kubeconfig file |
+| `--kubeconfig` | string | `kubectl`'s own resolution: `$KUBECONFIG`, then `~/.kube/config` | Path to kubeconfig file |
 
 ### How the workload is found
 
 <Steps>
   <Step title="Ownership">
     The first gate. `spec.workloadRef.managedBy` must be `unmanaged`. Everything else, including `unknown` and an absent `workloadRef`, is declined with the refusal and exit code `4`. Nothing after this step runs.
+  </Step>
+  <Step title="Ticket">
+    The action must carry a ticket the operator issued at or after the approval on record (`status.applyTicket.issuedAt`), unexpired, with a lifetime of at most ten minutes, in phase `Ticketed` or the `Applying` the operator moves to in the same pass. A ticket already sitting on the action, one issued before the approval, one with no issue time, and one on an action already `Verifying` or `Completed` are ignored. Without a usable ticket nothing is patched.
   </Step>
   <Step title="Namespace">
     The persona's namespace (`spec.personaRef.namespace`), falling back to the remediation's own namespace. Never anywhere else.
@@ -605,7 +672,7 @@ It is idempotent, which is what makes re-running it the fix for a heal that patc
     The container the operator observed, unless `--container` names another. Failing that, the only container if there is one, otherwise the container whose name matches the app. Anything else asks for `--container`.
   </Step>
   <Step title="Patch">
-    A strategic-merge patch that sets exactly the `resources.limits` and `resources.requests` fields the remediation changed (`cpu` and `memory` only), and nothing broader than the proposal. It runs under the field manager `dorgu` rather than kubectl's default `kubectl-patch`, so the entry it creates is distinguishable from a `kubectl patch` you ran yourself.
+    A strategic-merge patch that sets exactly the `resources.limits` and `resources.requests` fields the ticket carries (`cpu` and `memory` only), in the ticket's container, and nothing broader. The Deployment is matched on the UID and `metadata.generation` the ticket names, so a status or scale write does not invalidate a good ticket, and a spec change does. It runs under the field manager `dorgu` rather than kubectl's default `kubectl-patch`, so the entry it creates is distinguishable from a `kubectl patch` you ran yourself.
   </Step>
   <Step title="Release">
     The `dorgu` entry is then removed from `metadata.managedFields` and the object is read back to confirm it is gone, so a heal leaves **no ownership footprint** and a later server-side apply does not conflict with it. If the removal fails, the heal still succeeded and the CLI says loudly what is left behind and how to clear it. **New in CLI v0.11.0.** See [Dorgu leaves no field manager behind](/ownership-model#dorgu-leaves-no-field-manager-behind).
@@ -617,12 +684,7 @@ It is idempotent, which is what makes re-running it the fix for a heal that patc
 
 ### What the heal records
 
-**New in CLI v0.12.0.** Two writes follow a patch the cluster accepted, and only ever follow one:
-
-| Write | When | Why |
-|-------|------|-----|
-| Phase moves `Pending` → `Approved` | Only from `Pending` or an unset phase | Healing a `Pending` remediation directly has always been an implicit approval, and the command has always warned that it is. It just never recorded it. |
-| A `WorkloadPatched` condition is stamped | **Every** successful heal, whatever phase it started from | The explicit applied marker, naming the namespace, the Deployment, the container, and each field that was set. |
+After a patch the cluster accepted, and only after one, the CLI stamps a `WorkloadPatched` condition on the RemediationAction. It names the namespace, the Deployment, the container, and each field that was set.
 
 ```bash
 $ kubectl get remediationaction fix-oom-report-worker -n apps -o yaml
@@ -630,7 +692,7 @@ $ kubectl get remediationaction fix-oom-report-worker -n apps -o yaml
 
 ```yaml
 status:
-  phase: Approved
+  phase: Applying
   approvedBy: cli-user
   conditions:
     - type: WorkloadPatched
@@ -639,19 +701,12 @@ status:
       message: dorgu CLI applied resources.limits.memory=128Mi to Deployment apps/report-worker (container worker)
 ```
 
-<Warning>
-  **This fixes a heal that reported success and left the record wrong.** `heal` patched a workload from 64Mi to 128Mi, printed `✓ Healed`, exited `0`, and left the `RemediationAction` on `Pending`. The two things Dorgu keeps then disagreed: the cluster carried the new limits, and the record said nobody had approved anything and nothing had happened. For a product sold on organizational memory, memory that contradicts the cluster is worse than none.
+The CLI does not move the phase of an action. That lifecycle belongs to the operator, and `heal` no longer approves anything, so the only thing it writes is the condition.
 
-  The phase transition also closed a half nobody had noticed. A `Pending` action is a no-op to the operator, so the **persona** never learned the new limits either, which left the app's desired-state record out of step with the cluster as well.
-</Warning>
-
-Two design points, because both are easy to assume otherwise:
-
-- **The marker is a condition, not `status.appliedAt`.** `appliedAt` is the operator's: it is stamped when the persona patch lands and read during `Applying` to time the verification window, so writing to it would move a clock the CLI does not drive. It is also needed *on top of* the phase transition, because a re-heal after `--no-heal` starts from a phase already past `Approved`, where a phase change would be both wrong and invisible.
-- **The CLI does not move the phase of an action already `Approved`, `Applying`, `Verifying`, or terminal.** That lifecycle belongs to the operator, and a CLI writing into the middle of a state machine it does not drive is a different bug from the one being fixed. Those heals stamp the condition and leave the phase alone.
+The condition matters beyond the record: the operator reads it when it decides whether Dorgu is **credited** with the heal. A recovery with no `WorkloadPatched` (a `--no-heal`, a declined prompt, a patch that changed nothing) is recorded as `self-resolved`, not as a Dorgu heal. See [heal credit](/how-dorgu-decides#heal-credit).
 
 <Note>
-  The write is a read-modify-write, because conditions are keyed by type and adding one means sending the whole list. Every other writer's condition goes back as raw JSON byte for byte, the CLI's own prior marker is replaced rather than appended, the `resourceVersion` is sent as a precondition, and a conflict is retried against fresh state three times before it is reported. Round-tripping the operator's conditions through a struct would silently drop fields the CLI does not know about, and quietly rewriting the operator's record while fixing a record bug is a poor trade.
+  The write is a read-modify-write, because conditions are keyed by type and adding one means sending the whole list. Every other writer's condition goes back as raw JSON byte for byte, the CLI's own prior marker is replaced rather than appended, the `resourceVersion` is sent as a precondition, and a conflict is retried against fresh state three times before it is reported. Round-tripping the operator's conditions through a struct would silently drop fields the CLI does not know about.
 </Note>
 
 ### When the record cannot be written
@@ -666,6 +721,8 @@ The workload is patched by then, so nothing is undone. But the command **exits `
     dorgu remediation heal fix-oom-report-worker -n apps
   Until then, treat the remediation record as incomplete rather than as evidence.
 ```
+
+The re-run works only while the ticket is still valid (10 minutes) and the action is still `Ticketed` or `Applying`. After that, the heal is refused and the record stays incomplete. The Deployment is patched either way, so check it with `kubectl get deploy`.
 
 Note that the success line still prints, because the heal genuinely succeeded. It is the *record* that failed, and the two are reported separately.
 
@@ -683,8 +740,12 @@ This is the same class as the field-manager footprint warning, with one delibera
 | **`spec.workloadRef` absent** | **Declined.** Treated as owned: it means either an operator older than v0.9.0 or a workload that could not be read, and neither is evidence that patching is safe. |
 | Resolved Deployment disagrees with `workloadRef.name` | Refused. A decision about one workload does not carry to another. |
 | Phase `Rejected`, `Failed`, `Expired`, `RolledBack` | Refused. |
-| Phase `Approved`, `Applying`, `Verifying`, `Completed` | Proceeds — this is the expected path. |
-| Phase `Pending` or unset | Warns that healing directly is an implicit approval, then proceeds. |
+| Phase `Pending` or unset | **Refused.** `heal` is not an approval, and a ticket exists only for an approved action. Approve it first. |
+| Phase `Approved`, `Ticketed`, `Applying` | Proceeds, with the operator's ticket. This is the expected path. |
+| Phase `Verifying`, `Completed` | **Refused.** The operator's verdict would be about a workload nobody changed. |
+| No ticket, an expired ticket, or a ticket issued before the approval on record | Refused, with an upgrade hint when the operator is older than v0.13.0. |
+| Deployment UID or `metadata.generation` differs from the ticket | Refused. |
+| Cluster self-healing mode is `observe`, or cannot be read | Refused. |
 | Protected context | Refused if the kube-context name contains any pattern in `DORGU_PROTECTED_CONTEXTS` (default `prod`). See [protected contexts](#protected-contexts). |
 | Confirmation | Prints the namespace, Deployment, container, and the exact field changes, then prompts `[y/N]` unless `--yes` is set. It also states the limit of the `unmanaged` classification: nothing Dorgu can see reconciles this Deployment, and [a kustomize overlay leaves no marker](/ownership-model#the-kustomize-limitation), so re-applying one would revert the change. |
 
@@ -705,11 +766,19 @@ export DORGU_PROTECTED_CONTEXTS=production,live
 dorgu remediation heal fix-oom-api-server -n staging --context kind-dorgu-dev
 ```
 
-A refusal exits `1` and names the context and the pattern it matched:
+A refusal exits `1` and names the context and the pattern it matched. It opens with the command you ran, so the message is never about something you did not ask for:
+
+| You ran | The refusal opens with |
+|---------|------------------------|
+| `approve --no-heal` | `refusing to approve` |
+| `approve` | `refusing to approve and heal` |
+| `heal` | `refusing to heal` |
 
 ```
-refusing to heal: kube-context "eks-prod-eu" matches protected pattern "prod" (DORGU_PROTECTED_CONTEXTS); switch to a non-production context
+refusing to approve and heal: kube-context "eks-prod-eu" matches protected pattern "prod" (DORGU_PROTECTED_CONTEXTS); switch to a non-production context
 ```
+
+This guard **writes nothing to the cluster it protects**, not even an Event: it declines locally, on stderr, and [`dorgu report`](/cli/commands/report) does not count it. Every other CLI decline is recorded as a Warning Event on the RemediationAction.
 
 <Warning>
   **This is a name check and nothing more.** It is a seatbelt against healing the wrong cluster by accident, not a security boundary: a context with a different name passes it. `aws eks update-kubeconfig` names contexts after the cluster ARN, so an EKS cluster whose name contains `prod` is refused under the default. Narrow the patterns if that is not what you want.

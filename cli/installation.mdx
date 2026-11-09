@@ -40,7 +40,7 @@ That URL is an unversioned alias that always resolves to the newest release, so 
 To pin an exact release instead:
 
 ```bash
-VERSION=0.13.0
+VERSION=0.14.0
 OS=linux
 ARCH=amd64
 ARCHIVE="dorgu_${VERSION}_${OS}_${ARCH}.tar.gz"
@@ -59,14 +59,14 @@ The archive also contains `README.md` and `LICENSE`; naming `dorgu` in the `tar`
 
 ### Windows
 
-Download `dorgu_windows_amd64.zip` (or `_arm64`) from the [latest release](https://github.com/dorgu-ai/dorgu/releases/latest), extract it, and put `dorgu.exe` somewhere on your `PATH`. The pinned form is `dorgu_0.13.0_windows_amd64.zip`.
+Download `dorgu_windows_amd64.zip` (or `_arm64`) from the [latest release](https://github.com/dorgu-ai/dorgu/releases/latest), extract it, and put `dorgu.exe` somewhere on your `PATH`. The pinned form is `dorgu_0.14.0_windows_amd64.zip`.
 
 ### Verifying the download
 
 Each release publishes `checksums.txt`, which covers the versioned archives:
 
 ```bash
-VERSION=0.13.0
+VERSION=0.14.0
 curl -fLO "https://github.com/dorgu-ai/dorgu/releases/download/v${VERSION}/checksums.txt"
 
 # Linux
@@ -84,7 +84,7 @@ With a Go toolchain, install the latest release:
 Or pin a specific version:
 
 ```bash
-go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.13.0
+go install github.com/dorgu-ai/dorgu/cmd/dorgu@v0.14.0
 ```
 
 <Note>
@@ -111,7 +111,7 @@ dorgu version
 From a release archive, the commit and build date are stamped in:
 
 ```
-dorgu version v0.13.0
+dorgu version v0.14.0
 Build: <commit> @ <build date>
 ```
 

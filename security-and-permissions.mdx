@@ -57,11 +57,11 @@ Everything the operator is permitted to do falls into three buckets: **read clus
 | `applicationpersonas/status` | get, update, patch | Validation results, health, resource baselines, ArgoCD sync state. |
 | `clusterpersonas.dorgu.io` | get, list, watch, create, update, patch, delete | Auto-create and reconcile the singleton `dorgu-cluster`. |
 | `clusterpersonas/status` | get, update, patch | Discovered nodes, add-ons, capacity, saturation. |
-| `incidentmemories.dorgu.io` | get, list, watch, create, update, patch | Open and update incident records. **No `delete`.** |
+| `incidentmemories.dorgu.io` | get, list, watch, create, update, patch, **delete** | Open and update incident records. `delete` is pruning Resolved incidents past `healthCheck.resolvedRetention`, Dorgu's own records and never a workload. **New in operator v0.13.0.** See [why `delete` is here](#why-the-operator-can-delete-incidentmemories). |
 | `incidentmemories/status` | get, update, patch | Resolution outcome and duration. |
 | `remediationactions.dorgu.io` | get, list, watch, create, update, patch | Propose fixes and record their lifecycle. **No `delete`.** |
 | `remediationactions/status` | get, update, patch | Phase transitions and verification results. |
-| `dorguevents.dorgu.io` | create, get, list, watch, delete | The classified-event pipeline. Records are write-once (**no `update`**); `delete` is the retention cleaner pruning Dorgu's own records. See [why `delete` is here](#why-the-operator-can-delete-dorguevents). |
+| `dorguevents.dorgu.io` | create, get, list, watch, delete | The classified-event pipeline, **off by default since v0.13.0** (`eventPipeline.enabled`). Records are write-once (**no `update`**); `delete` is the retention cleaner pruning Dorgu's own records. See [why `delete` is here](#why-the-operator-can-delete-dorguevents). |
 | `apps/deployments`, `apps/replicasets` | **get, list, watch** | Persona validation, ownership detection, and pod-to-ReplicaSet-to-Deployment correlation. **Read-only.** |
 | `pods`, `namespaces`, `nodes` | get, list, watch | Detection signals and cluster discovery. **Read-only.** |
 | `events` | get, list, watch, create, patch | List and watch for the event pipeline; create and patch to record Dorgu's own Kubernetes Events. |
@@ -103,10 +103,12 @@ rules:
     resources: ["clusterpersonas/finalizers"]
     verbs: ["update"]
 
-  # IncidentMemory CRD (created by healthcheck reconciler; status updated by incident controller)
+  # IncidentMemory CRD (created by healthcheck reconciler; status updated by incident
+  # controller). `delete` is pruning Resolved incidents past healthCheck.resolvedRetention:
+  # dorgu's own records, never a workload.
   - apiGroups: ["dorgu.io"]
     resources: ["incidentmemories"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["dorgu.io"]
     resources: ["incidentmemories/status"]
     verbs: ["get", "update", "patch"]
@@ -166,7 +168,7 @@ rules:
 
 This ClusterRole is a trust artifact, so a new verb in it deserves an explanation rather than a silent diff.
 
-`delete` on `dorguevents.dorgu.io` is **new in operator v0.10.0**. Without it the retention cleaner had no permission to act: it ran every cycle, failed, logged the failure, and removed nothing, while `DorguEvent` records accumulated in etcd. A five-app clean-room cluster produced 187 records in 100 minutes with no bound on the count. See [`dorguEvents.retention` and `dorguEvents.maxRecords`](/operator/configuration/helm-values#dorguevent-retention).
+`delete` on `dorguevents.dorgu.io` is **new in operator v0.10.0**. Without it the retention cleaner had no permission to act: it ran every cycle, failed, logged the failure, and removed nothing, while `DorguEvent` records accumulated in etcd. A five-app clean-room cluster produced 187 records in 100 minutes with no bound on the count. See [`dorguEvents.retention` and `dorguEvents.maxRecords`](/operator/configuration/helm-values#event-pipeline-and-dorguevent-retention). From v0.13.0 the pipeline that writes these records is off by default, so the verb is exercised only when you turn it on.
 
 The grant is scoped to **Dorgu's own CRD** and to no workload kind, so "the operator never writes workloads" is unchanged. Two tests in the operator repo hold that line, one asserting the new verb and one asserting the operator still cannot `create`, `update`, `patch`, or `delete` Deployments, ReplicaSets, Pods, Nodes, or Namespaces. Check both halves on your own cluster rather than taking either on trust:
 
@@ -175,6 +177,21 @@ SA=system:serviceaccount:dorgu-system:dorgu-operator
 
 kubectl auth can-i delete dorguevents.dorgu.io --as="$SA" -A   # yes
 kubectl auth can-i delete deployments          --as="$SA" -A   # no
+```
+
+### Why the operator can delete IncidentMemories
+
+A second new verb, for the same reason: it deserves an explanation rather than a silent diff.
+
+`delete` on `incidentmemories.dorgu.io` is **new in operator v0.13.0**. Resolved incidents used to accumulate forever. The operator now deletes a Resolved incident whose last sighting is older than `healthCheck.resolvedRetention` (default 30 days). It keeps the newest resolved incident of every fault, so a recurrence still numbers on from it, and any incident a live RemediationAction names. Before it deletes anything it reads the incident from the API server, confirms it is still the same object, still Resolved and still past the retention, and sends the delete with the live `resourceVersion` as a precondition.
+
+The grant is scoped to **Dorgu's own CRD**. Without it, every prune fails with a Forbidden error and nothing else changes. Check both halves on your own cluster:
+
+```bash
+SA=system:serviceaccount:dorgu-system:dorgu-operator
+
+kubectl auth can-i delete incidentmemories.dorgu.io --as="$SA" -A   # yes
+kubectl auth can-i delete deployments               --as="$SA" -A   # no
 ```
 
 ## How the AI API key reaches the operator
@@ -213,9 +230,9 @@ That is why the ownership guard is in the CLI rather than in RBAC. It is not a p
 
 | Write | Actor | Credentials | What stops it |
 |-------|-------|-------------|---------------|
-| Persona `spec` patch, on an approved remediation | Operator | Operator ServiceAccount | Requires an approved `RemediationAction`; scoped to the reviewed fields |
+| Persona `spec` patch, on an approved remediation | Operator | Operator ServiceAccount | Requires an approved `RemediationAction` that cleared the [gate at approval](/how-dorgu-decides#the-approval-time-re-check-and-the-apply-ticket); applies only the ticket, scoped to CPU and memory under `resources` |
 | Persona / Incident / Remediation `status` | Operator | Operator ServiceAccount | Nothing. These are Dorgu's own records. |
-| **Deployment patch** | **CLI** | **Yours** | The [ownership guard](/ownership-model): declined unless `managedBy: unmanaged` |
+| **Deployment patch** | **CLI** | **Yours** | The [ownership guard](/ownership-model), re-run on the live Deployment: declined unless nothing else owns it. Also needs the operator's apply ticket, and patches exactly what the ticket says. |
 | Anything else on a workload | Nobody | n/a | The operator has no RBAC for it; the CLI never attempts it |
 
 <Warning>
@@ -231,13 +248,14 @@ RBAC bounds what is *possible*. These bound what Dorgu will *propose*, and they 
 | Human approval | **Required by default.** Every proposal is created with `approval.required: true` and phase `Pending`. |
 | Blast radius | Resource increases capped at **2×** the **live** container value; decreases capped at 50% |
 | No new keys | A remediation may only change a resource key the workload already sets. Approving a memory fix cannot silently add a CPU limit. |
-| Rate limit | 5 remediations per persona per hour |
+| Rate limit | 5 remediations per persona per hour (the lowest limit on any ClusterPersona wins; an unreadable limit refuses) |
 | Concurrency | One active remediation per persona |
-| Failure cooldown | 30 minutes after a `Failed` remediation for the same persona |
+| Failure cooldown | 30 minutes after a `Failed` or `RolledBack` remediation for the same persona |
+| Approval re-check | At approval the gate runs again on the live cluster and writes a ticket valid for 10 minutes, or refuses. The apply runs it a third time. See [How Dorgu decides](/how-dorgu-decides). |
 | Namespace deny list | `kube-system` and the operator's own namespace always, plus the chart's `safety.excludedNamespaces` and `policies.selfHealing.excludeNamespaces`. See [protected namespaces](/operator/features/self-healing#protected-namespaces). |
 | Auto-executable steps | Only `persona-update` steps may be `autoExecutable`, enforced by a **CEL validation rule on the CRD** at the API server. No plan can escalate itself. |
 | Step commands | Sanitized before storage and re-checked before display: single line, must start with `kubectl `, no shell metacharacters, bounded length. **Never executed**, by the operator or the CLI. |
-| Rollback | Automatic. The operator restores `prePatchState` when verification finds health degraded. |
+| Rollback | Automatic. The operator restores the persona fields it wrote, from the baseline the gate recorded, when verification finds health degraded. It never overwrites a later edit. |
 
 <Warning>
   **`trustLevel`, `policies.selfHealing.enabled`, and `approval.autoApproveRule` are descriptive, not enforced.** `trustLevel` is only passed to the AI planner as context, detection and proposal run regardless of `enabled` (use `mode: observe` to stop at diagnosis), and no controller reads `autoApproveRule`. **Every remediation requires human approval.** `maxRemediationsPerHour` and `excludeNamespaces` *are* enforced. We would rather you knew.
@@ -250,6 +268,8 @@ RBAC bounds what is *possible*. These bound what Dorgu will *propose*, and they 
 | Cluster-scoped role | The operator uses a `ClusterRole`, because `ClusterPersona` discovery reads nodes and namespaces cluster-wide and personas can live in any namespace. Every cluster-wide grant on a non-`dorgu.io` resource is read-only. |
 | Namespace scoping | Not currently supported. Restricting the operator to a namespace list is not yet a chart option. |
 | Admission webhook | None. Operator `v0.12.0` removed the Deployment validating webhook, so Dorgu sits in no admission path and cannot block a Deployment. Persona validation results are reported on status only. |
+| Ticket integrity | **A known gap.** A client with write access to `remediationactions/status` can write an approval history and a ticket. What it can make the operator apply is limited to what the spec's own plan produces, and the operator never writes workloads, but the CLI trusts a ticket it finds in status and carries stopgap checks (the ticket must be newer than the approval it recorded, unexpired, and match the live Deployment). An admission policy that makes the operator the only writer of the ticket is planned. Until then, **treat `patch` on `remediationactions/status` as the right to approve**, and grant it only to people and tools you would trust to approve. |
+| Approver identity | **A known gap.** `approvedBy` is free text (the CLI writes `cli-user`). Nothing checks who approved, and nothing requires that the approver is not whoever proposed. Human approval is a rule of the workflow today, not a property the cluster enforces. Identity checks are planned for a later release. |
 | Metrics endpoint | The chart always renders `--metrics-secure=true`, so metrics are served over HTTPS with RBAC-protected authn and authz. There is no value that turns that off. |
 | Egress | Only needed for the Anthropic API, and only when AI is enabled. A default install makes no outbound calls. |
 | Image provenance | Published to `ghcr.io/dorgu-ai/dorgu-operator`; the Helm chart is an OCI artifact at `ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator`. |

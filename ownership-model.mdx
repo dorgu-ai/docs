@@ -396,6 +396,18 @@ Not coupled at all, and worth saying so explicitly, because it is the pair a rea
 
 The reason this one exists at all is a reporting failure rather than a safety failure. The verdict used to be spliced onto the front of the model's `rationale` as `[safety:blast-radius] …`, which in clean-room run #4 put Dorgu's measurement one line below the model's own claim that the same 16x change was "well within a 2x ceiling", with nothing to tell the reader which of the two had been computed.
 
+### Apply tickets: CLI v0.14.0 with operator v0.13.0
+
+These two **are** coupled, and in a fixed order. Operator v0.13.0 issues an apply ticket at approval and the CLI applies exactly that ticket. See [How Dorgu decides](/how-dorgu-decides#the-approval-time-re-check-and-the-apply-ticket).
+
+| Combination | What happens |
+|-------------|--------------|
+| **CLI v0.14.0 + operator v0.13.0** | Correct. The CLI waits for the ticket, re-detects ownership from the live Deployment, and patches only what the ticket says. |
+| **CLI v0.14.0 + operator ≤ v0.12.1** | Safe but limited. No ticket ever arrives, so the CLI patches nothing and says why. |
+| **CLI ≤ v0.13.0 + operator v0.13.0** | **The ticket does not apply.** The older CLI reads `spec.steps[]` and patches the Deployment without a ticket, so the approval-time re-check does not constrain that patch. Upgrade the CLI first. |
+
+Ownership no longer rests on the proposal's record alone. From CLI v0.14.0, `approve` and `heal` re-detect it from the live Deployment before every patch, and refuse one that carries Helm, Argo CD or Flux stamps, kustomize build metadata, a controller owner reference or a GitOps field manager, whatever `workloadRef.managedBy` says. They also refuse a record that names no workload at all.
+
 ## Trying it
 
 The [greenfield quickstart](/cli/quickstart) heals end to end, because its demo app is applied with `kubectl apply` and is therefore `unmanaged`. To see the ownership path instead, point Dorgu at anything you installed with Helm and break it **through Helm**:
@@ -407,7 +419,7 @@ dorgu persona import -n apps --all --apply
 # Give one of them a limit it cannot live within. Set it through Helm, so Helm
 # stays the only manager of that field. The values key is chart-specific;
 # `resources.limits.memory` is the common one.
-helm upgrade <release> <chart> -n apps --reuse-values \
+helm upgrade <release> <chart> -n apps --reset-then-reuse-values \
   --set resources.limits.memory=32Mi
 
 # One detection cycle later
@@ -433,7 +445,7 @@ Pick a limit the container genuinely cannot live within. If the pod comes back h
 The diff names the Helm release, shows the Deployment change, and offers `--no-heal` and `reject` instead of `approve`. Apply the fix where that chart's values live, then run your usual upgrade and record the decision:
 
 ```bash
-helm upgrade <release> <chart> -n apps --reuse-values \
+helm upgrade <release> <chart> -n apps --reset-then-reuse-values \
   --set resources.limits.memory=128Mi
 
 dorgu remediation approve <remediation-name> -n apps --no-heal

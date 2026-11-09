@@ -159,7 +159,7 @@ dorgu remediation diff <remediation-name> -n demo   # the ordered plan, with dif
 dorgu remediation approve <remediation-name> -n demo
 ```
 
-The operator patches the `ApplicationPersona` spec — the app's desired state — and moves the remediation to `Applying`. The CLI then patches the Deployment with your credentials so the pod actually recovers.
+The operator re-checks the approval against the live cluster and writes a short-lived apply ticket. It applies the ticket to the `ApplicationPersona` spec, the app's desired state, and moves the remediation to `Applying`. The CLI then waits for the ticket and patches the Deployment with your credentials, using only what the ticket says, so the pod actually recovers. The CLI must be `v0.14.0` or newer for the ticket to be honoured: [upgrade guide](/upgrade-guide).
 
 That last part happens only when nothing else owns the Deployment. The demo app is applied with `kubectl apply`, so it is `unmanaged` and Dorgu heals it. On an owned workload the CLI declines instead, exits `4`, and hands you the owner-shaped steps: nothing is approved and nothing changes. See [the ownership model](/ownership-model).
 

@@ -1,0 +1,132 @@
+---
+title: "Metrics reference"
+description: "Every Prometheus metric the Dorgu operator exports: gate decisions, apply tickets, heal credit, stage durations, incidents and LLM usage"
+---
+
+The operator exports Prometheus metrics on its metrics endpoint. This page lists every `dorgu_*` family, its labels, and what it answers. Metrics are a dashboard view. For a one-off summary that anyone can paste into an issue, use [`dorgu report`](/cli/commands/report), which reads the cluster's resources instead of `/metrics`.
+
+The set below is **operator `v0.13.0`**. `dorgu_incidents_total`, `dorgu_proposals_total` and `dorgu_remediation_transitions_total` exist from `v0.12.0`. Everything else is new in `v0.13.0`.
+
+## Scraping
+
+With the chart defaults, the operator serves metrics over HTTPS on `:8443` and authenticates every scrape. Bind the chart's metrics-reader ClusterRole to whatever scrapes it. The values and the role binding are in [Metrics and probes](/operator/configuration/helm-values#metrics-and-probes).
+
+<Note>
+  **Every family is created at zero when the operator starts.** A Prometheus counter with no series is simply absent, so a dashboard that loads before the first incident would show "no data" where the truth is "none yet". Here `0` means zero events. Absent means the operator is not being scraped.
+</Note>
+
+Every label value comes from a fixed set. None is ever an object name, a namespace, or text a model wrote, so cardinality stays bounded. A gate reason outside the known set is recorded as `other`.
+
+## The gate
+
+| Metric | Type | Labels | What it answers |
+|--------|------|--------|-----------------|
+| `dorgu_gate_decisions_total` | counter | `phase`, `stage`, `result`, `reason` | One count per gate run. **The refusal mix.** |
+| `dorgu_gate_stage_duration_seconds` | histogram | `phase`, `stage` | How long each stage took |
+| `dorgu_guardrail_verdicts_total` | counter | `guardrail`, `verdict` | Every verdict a guardrail recorded, including passes |
+
+### `dorgu_gate_decisions_total`
+
+| Label | Values |
+|-------|--------|
+| `phase` | `Proposal`, `ApprovalRecheck`, `Apply` |
+| `stage` | The stage that refused: `Validate`, `Ground`, `Ownership`, `Guardrails`, `ModePolicy`, `DedupCooldown`, or `Ticket` (the apply-time ticket check). `complete` when the run did not refuse. |
+| `result` | `pass`, `clamp` (the plan was narrowed and may proceed), `refuse`, `deferred` (an outstanding proposal answers this incident), `error` (the gate could not decide, so nothing proceeded) |
+| `reason` | The refusing guardrail, such as `blast-radius`, `deny-list`, `rate-limit`, `concurrent`, `self-healing-mode`, `workload-gone`, `ticket-expired`; `none` for a pass; `gate-error` for an error |
+
+The same refusal is also a condition and an Event. See [refusals are recorded](/how-dorgu-decides#refusals-are-recorded). Metric reasons are the kebab-case guardrail names. The condition reasons are the same names in CamelCase (`blast-radius` is `BlastRadius`).
+
+```promql
+# What the gate refused over the last day, by stage and reason
+sum by (phase, stage, reason) (increase(dorgu_gate_decisions_total{result="refuse"}[1d]))
+
+# Share of proposal-time runs that were refused
+sum(rate(dorgu_gate_decisions_total{phase="Proposal",result="refuse"}[1h]))
+  / sum(rate(dorgu_gate_decisions_total{phase="Proposal"}[1h]))
+```
+
+`deferred` is not a refusal. Leave it out of any "refused" ratio.
+
+## Tickets, verification and heal credit
+
+| Metric | Type | Labels | What it answers |
+|--------|------|--------|-----------------|
+| `dorgu_tickets_total` | counter | `result` | Apply tickets by outcome. `result` is `issued`, `expired`, `refused_at_approval` or `refused_at_apply`. |
+| `dorgu_verifications_total` | counter | `result` | Post-apply verification results: `healthy`, `degraded`, `unknown` |
+| `dorgu_heal_credit_total` | counter | `credited`, `reason` | Healthy verifications, by whether the recovery is credited as a Dorgu heal. **Only `credited="true"` counts toward safe heals.** |
+| `dorgu_rollbacks_total` | counter | `workload_diverged` | Rollbacks, by whether the live workload still carries the change afterwards: `true`, `false` or `unknown` |
+| `dorgu_incidents_resolved_total` | counter | `outcome` | Incidents by resolution: `resolved`, `rollback`, `partial`, `failed`, `acknowledged`, `self-resolved`, or `cleared` (recovered with no Dorgu action) |
+
+`dorgu_heal_credit_total` reasons: `WorkloadPatchedByTicket` (credited), and for `credited="false"`: `NothingPatched`, `ResourcesNotTicket`, `WorkloadDiverged`, `WorkloadUnreadable`. They match the reasons on the `HealCredited` and `WorkloadDiverged` conditions. See [heal credit](/how-dorgu-decides#heal-credit).
+
+Only `resolved` is a clean heal. `partial` and `self-resolved` are real recoveries that Dorgu cannot claim, so count them separately.
+
+## Durations
+
+| Metric | Type | Labels | Buckets |
+|--------|------|--------|---------|
+| `dorgu_stage_duration_seconds` | histogram | `stage` | 1 s doubling to about 9 h |
+| `dorgu_incident_time_to_detect_seconds` | histogram | none | 1 s doubling to about 2.3 h |
+| `dorgu_healthcheck_cycle_duration_seconds` | histogram | none | 50 ms to 60 s |
+| `dorgu_gate_stage_duration_seconds` | histogram | `phase`, `stage` | 1 ms to 10 s |
+
+`dorgu_stage_duration_seconds` is the time a fix spends in each part of its life:
+
+| `stage` | From | To |
+|---------|------|----|
+| `detect_to_proposal` | First detection of the incident | Its **first** proposal. Measured once per incident, so a retry adds no sample. |
+| `proposal_to_decision` | Proposal | A human's approval or rejection (this is human time) |
+| `decision_to_applied` | Approval | The change applied |
+| `applied_to_verified` | Applied | Verification result |
+
+`dorgu_incident_time_to_detect_seconds` measures from the earliest contributing signal to the incident being recorded. Most signals are stamped when they are first observed, so it is mostly detector-to-record latency.
+
+```promql
+histogram_quantile(0.9, sum by (le) (rate(dorgu_stage_duration_seconds_bucket{stage="detect_to_proposal"}[1d])))
+```
+
+## Incidents and proposals
+
+| Metric | Type | Labels | What it answers |
+|--------|------|--------|-----------------|
+| `dorgu_incidents_total` | counter | `class`, `scope` | Incidents opened, by diagnosis category and attribution |
+| `dorgu_incident_recurrences_total` | counter | `class`, `scope` | Incidents opened because a fault came back after its incident resolved. Also counted in `dorgu_incidents_total`. |
+| `dorgu_incident_recurrences_capped_total` | counter | `class`, `scope` | Recurrences that reopened the latest incident because the [recurrence cap](/operator/configuration/helm-values#self-healing) was reached |
+| `dorgu_incident_prune_total` | counter | `result` | Resolved incidents considered for pruning: `deleted`, `kept_referenced` (a live RemediationAction names it), `error` |
+| `dorgu_proposals_total` | counter | `source`, `action_type`, `result` | Proposal attempts. `result` is `proposed`, `skipped`, `suppressed`, `deferred` or `error`. `source` is `dorgu` today. |
+| `dorgu_remediation_transitions_total` | counter | `from`, `to` | RemediationAction phase changes the operator wrote |
+
+`class` is one of `resource`, `health`, `node`, `controlplane`, `deployment`, `dependency`, `scaling`, `security`. `scope` is `persona` (the incident belongs to an ApplicationPersona) or `unattributed`.
+
+## The model
+
+| Metric | Type | Labels | What it answers |
+|--------|------|--------|-----------------|
+| `dorgu_llm_requests_total` | counter | `provider`, `purpose`, `outcome` | Requests sent to the provider. `purpose` is `diagnosis` or `planning`. `outcome` is `success` or `error`. |
+| `dorgu_llm_tokens_total` | counter | `provider`, `purpose`, `kind` | Tokens the provider reported, `kind` is `input` or `output` |
+| `dorgu_llm_request_duration_seconds` | histogram | `provider`, `purpose` | Request latency, 250 ms to 64 s |
+| `dorgu_llm_invalid_output_total` | counter | `provider`, `purpose` | Replies that failed schema validation and were replaced by the rule-based result |
+| `dorgu_llm_cache_total` | counter | `purpose`, `result` | Model calls avoided (`hit`) or made (`miss`) by the signal-fingerprint cache |
+| `dorgu_model_claims_stripped_total` | counter | `kind` | Claims the operator removed from model text: `fabricated_clamp` (a sentence claiming a guardrail clamp no recorded verdict supports) or `refused_value` (a value a guardrail refused) |
+
+`provider` is `claude` or `gemini`. With AI off, these stay at zero.
+
+```promql
+# Model calls per incident over a day, a rough cost signal
+sum(increase(dorgu_llm_requests_total[1d])) / sum(increase(dorgu_incidents_total[1d]))
+```
+
+A rising `dorgu_llm_invalid_output_total` means the model is not following the reply schema. The incident is still diagnosed by the rules, so nothing breaks, but you are paying for replies Dorgu discards.
+
+## Also exported
+
+The controller-runtime metrics (`controller_runtime_reconcile_total`, work queue depth and so on) are exported from the same endpoint, because the operator is built on controller-runtime.
+
+<CardGroup cols={2}>
+  <Card title="How Dorgu decides" icon="route" href="/how-dorgu-decides">
+    What each stage, ticket and heal-credit label means
+  </Card>
+  <Card title="Helm values" icon="helm" href="/operator/configuration/helm-values#metrics-and-probes">
+    Turn the endpoint on, secure it, and grant a scraper access
+  </Card>
+</CardGroup>
