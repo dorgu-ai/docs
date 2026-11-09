@@ -26,7 +26,7 @@ The Dorgu Operator is the AI SRE that runs inside your cluster. It detects incid
 </CardGroup>
 
 <Note>
-  **Non-invasive design** -- The operator never creates or modifies workload resources (Deployments, Services). It reads cluster state, updates its own CRDs, and recommends. When you approve a remediation it patches the ApplicationPersona spec — the app's desired-state record — and the CLI applies the workload change with your credentials. This is a core architectural invariant, not a setting.
+  **Non-invasive design.** The operator never creates or modifies workload resources (Deployments, Services). It reads cluster state, updates its own CRDs, and recommends. When you approve a remediation it patches the ApplicationPersona spec (the app's desired-state record) and the CLI applies the workload change with your credentials. This is a core architectural invariant, not a setting.
 </Note>
 
 ## How it works

@@ -3,7 +3,7 @@ title: "Self-healing"
 description: "How Dorgu detects incidents, diagnoses root cause, proposes an ordered fix, and heals with your approval"
 ---
 
-Vanilla Kubernetes restarts a crash-looping pod forever. It never asks *why*. Dorgu's self-healing loop closes that gap: it detects the failure, diagnoses the root cause, proposes a reviewable fix, and — once you approve — heals the workload and remembers the outcome.
+Vanilla Kubernetes restarts a crash-looping pod forever. It never asks *why*. Dorgu's self-healing loop closes that gap: it detects the failure, diagnoses the root cause, proposes a reviewable fix, heals the workload after you approve, and remembers the outcome.
 
 Code detects. AI explains. A human approves.
 
@@ -71,7 +71,7 @@ Full detail, including how ownership is detected, exit code `4`, and what the re
 
 ## Detect
 
-The health-check reconciler runs on a fixed interval — 60 seconds by default, and 30 seconds is a reasonable setting for a tight loop. It collects signals from every detector, correlates them to an `ApplicationPersona`, and opens or updates an `IncidentMemory`.
+The health-check reconciler runs on a fixed interval: 60 seconds by default, and 30 seconds is a reasonable setting for a tight loop. It collects signals from every detector, correlates them to an `ApplicationPersona`, and opens or updates an `IncidentMemory`.
 
 | Category | Signals |
 |----------|---------|
@@ -200,16 +200,16 @@ The planner assembles the context it sends to Claude:
 
 - A **`## Live workload (ground truth, read from the cluster just now)`** section, ahead of the persona: the observed container, its resources, and its image
 - The affected **ApplicationPersona**, spec *and* status, including the learned resource baselines, explicitly labelled a stale snapshot
-- The singleton **ClusterPersona** — platform, capacity, and the self-healing policy
+- The singleton **ClusterPersona**: platform, capacity, and the self-healing policy
 - Recent **IncidentMemory** records for the same application
-- The **RemediationActions those incidents referenced, with their phase and verification result** — so the model can see which past fixes actually worked and which were rolled back
+- The **RemediationActions those incidents referenced, with their phase and verification result**. With these the model can see which past fixes actually worked and which were rolled back
 
 Claude returns an ordered plan. Each step carries an order, type, description, rationale, risk level, an `autoExecutable` flag, and optionally a ready-to-run `command`; `persona-update` steps carry the JSON merge patch plus a `prePatchState` snapshot for rollback. The result lands on `RemediationAction.spec.steps[]` with `planSource: ai-anthropic`.
 
 For an owned workload the plan is then reshaped for its owner: see [what changes about the plan](/ownership-model#what-changes-about-the-plan).
 
 <Note>
-  **Only `persona-update` steps may be auto-executable.** This is enforced at the Kubernetes API server by a CEL validation rule on the CRD, not merely in operator code. `workload-apply`, `restart`, `scale`, `config-change`, and `manual` steps are advisory — recorded for a human, the CLI, or your pipeline to act on. No plan can escalate itself.
+  **Only `persona-update` steps may be auto-executable.** This is enforced at the Kubernetes API server by a CEL validation rule on the CRD, not merely in operator code. `workload-apply`, `restart`, `scale`, `config-change`, and `manual` steps are advisory. They are recorded for a human, the CLI, or your pipeline to act on. No plan can escalate itself.
 </Note>
 
 Read the resulting plan with [`dorgu remediation diff`](/cli/commands/remediation#remediation-diff).
@@ -230,7 +230,7 @@ Every proposal passes the safety checker before it is created.
 | Rejection cooldown | A rejected remediation suppresses re-proposal for the same incident and target for **1 hour**, or until the signal materially changes |
 | Namespace deny list | `kube-system` and the operator's own namespace always (`dorgu-system` with the documented install); plus anything in the chart's `safety.excludedNamespaces` or the ClusterPersona's `policies.selfHealing.excludeNamespaces`. See [protected namespaces](#protected-namespaces). |
 | Approval | **Required by default.** Every proposal is created with `approval.required: true` and phase `Pending`. A proposal nobody decides within 24 hours (`remediation.pendingTTL`) becomes `Expired`. At approval the gate runs again on the live cluster and issues an [apply ticket](/how-dorgu-decides#the-approval-time-re-check-and-the-apply-ticket). |
-| Deduplication | One remediation per incident, and one per persona-plus-target — so an OOM that also trips a crash-loop yields **two incidents but one fix** |
+| Deduplication | One remediation per incident, and one per persona-plus-target. So an OOM that also trips a crash-loop yields **two incidents but one fix** |
 | Rollback | Automatic. The operator restores `prePatchState` when verification finds the health degraded. |
 
 ### Protected namespaces
@@ -332,7 +332,7 @@ Approval starts a timed verification, not an instant success.
     The operator applies the apply ticket to the ApplicationPersona spec and moves to `Applying`, recording `appliedAt`. The approval is `Ticketed` for the moment between the gate clearing it and the write.
   </Step>
   <Step title="Wait">
-    It waits out `spec.rollback.healthCheckAfter` — **10 minutes** by default — then moves to `Verifying`.
+    It waits out `spec.rollback.healthCheckAfter` (**10 minutes** by default), then moves to `Verifying`.
   </Step>
   <Step title="Verify">
     It re-runs the whole detection engine and asks two questions: is the original signal still present for this persona, and are there new critical signals?
@@ -343,7 +343,7 @@ Approval starts a timed verification, not an instant success.
 </Steps>
 
 <Warning>
-  Your pod recovers within seconds of `approve`, but the remediation stays in `Applying` / `Verifying` for the full window and the incident stays open until then. That is the design, not a hang — the wait is what makes automatic rollback meaningful.
+  Your pod recovers within seconds of `approve`, but the remediation stays in `Applying` / `Verifying` for the full window and the incident stays open until then. That is the design, not a hang. The wait is what makes automatic rollback meaningful.
 </Warning>
 
 Either way the record persists. `IncidentMemory` keeps the signal, the root cause, the confidence, the occurrence count, and the resolution outcome; `RemediationAction` keeps the plan and the verification result. Both become context for the next proposal.
@@ -598,7 +598,7 @@ Two rules bound it. Only personas in the **signal's own namespace** are consider
   </Accordion>
 
   <Accordion title="The remediation is stuck in Applying or Verifying">
-    It is not stuck. The operator waits out the verification window — 10 minutes by default — before it will call the fix good. Check the pod itself: if it is `1/1 Running` with no new restarts, the heal worked and the phase will settle on its own.
+    It is not stuck. The operator waits out the verification window (10 minutes by default) before it will call the fix good. Check the pod itself: if it is `1/1 Running` with no new restarts, the heal worked and the phase will settle on its own.
   </Accordion>
 
   <Accordion title="Plans come back rule-based when AI is enabled">

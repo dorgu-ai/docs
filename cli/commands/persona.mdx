@@ -5,7 +5,7 @@ description: Create ApplicationPersonas from running Deployments, and inspect th
 
 ## Overview
 
-The `dorgu persona` command group manages **ApplicationPersona** custom resources. An ApplicationPersona is a Kubernetes CRD that captures the operational identity of your application — its resource requirements, scaling behavior, health characteristics, and deployment preferences — as a declarative, version-controlled resource.
+The `dorgu persona` command group manages **ApplicationPersona** custom resources. An ApplicationPersona is a Kubernetes CRD that captures the operational identity of your application as a declarative, version-controlled resource. It records resource requirements, scaling behavior, health characteristics, and deployment preferences.
 
 Dorgu only watches workloads that have a persona. You create them from the Deployments already running on your cluster with [`persona import`](#persona-import), then inspect them with [`persona list`](#persona-list) and [`persona status`](#persona-status).
 
@@ -37,9 +37,9 @@ It prints the YAML by default so you can read it before anything reaches the clu
 |------|------|---------|-------------|
 | `-n`, `--namespace` | string | **required** | Namespace to import from |
 | `--all` | bool | `false` | Import every Deployment in the namespace |
-| `--name` | string | — | Import a single Deployment by name |
+| `--name` | string | none | Import a single Deployment by name |
 | `--dry-run` | bool | `true` (implied) | Print the personas without applying. This is the default; the flag is there to be explicit. |
-| `-o`, `--output` | string | — | Write the personas to a file instead of stdout |
+| `-o`, `--output` | string | none | Write the personas to a file instead of stdout |
 | `--apply` | bool | `false` | Apply the personas to the cluster |
 | `--kubeconfig` | string | `kubectl`'s own resolution: `$KUBECONFIG`, then `~/.kube/config` | Path to kubeconfig file |
 

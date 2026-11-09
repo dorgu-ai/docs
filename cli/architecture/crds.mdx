@@ -3,7 +3,7 @@ title: "CRD Specification"
 description: "ApplicationPersona and ClusterPersona Custom Resource Definitions"
 ---
 
-Dorgu extends Kubernetes with five Custom Resource Definitions (CRDs) that capture application identity, cluster context, and the self-healing record. These CRDs are the central data model that connects the CLI, Operator, and integrations — and they mean your incident history and remediation record live in your own cluster, not a vendor's database.
+Dorgu extends Kubernetes with five Custom Resource Definitions (CRDs) that capture application identity, cluster context, and the self-healing record. These CRDs are the central data model that connects the CLI, Operator, and integrations. They also mean your incident history and remediation record live in your own cluster, not a vendor's database.
 
 ## CRD Overview
 
@@ -15,7 +15,7 @@ Dorgu extends Kubernetes with five Custom Resource Definitions (CRDs) that captu
 | **RemediationAction** | Namespaced | A proposed fix, its approval state, and its verification outcome |
 | **DorguEvent** | Namespaced | A classified, correlated Kubernetes event, bounded by age and by count |
 
-The primary CRD is **ApplicationPersona**, which describes a single application's desired operational profile and the Operator's observed state. **ClusterPersona** captures cluster-level context. The remaining three are the self-healing loop's memory — see [Self-healing](/operator/features/self-healing).
+The primary CRD is **ApplicationPersona**, which describes a single application's desired operational profile and the Operator's observed state. **ClusterPersona** captures cluster-level context. The remaining three are the self-healing loop's memory. See [Self-healing](/operator/features/self-healing).
 
 ```mermaid
 classDiagram
@@ -86,7 +86,7 @@ The one exception is remediation: when you approve a `RemediationAction`, the Op
 </Warning>
 
 <Note>
-  If you manage personas through GitOps, an approved remediation's patch will show as drift on the next sync — mirror the change back into your repo so your pipeline does not revert the fix. `dorgu remediation approve --no-heal` does not avoid this: it skips the *Deployment* patch only, and the persona is still updated by the Operator once the action is `Approved`.
+  If you manage personas through GitOps, an approved remediation's patch will show as drift on the next sync. Mirror the change back into your repo so your pipeline does not revert the fix. `dorgu remediation approve --no-heal` does not avoid this: it skips the *Deployment* patch only, and the persona is still updated by the Operator once the action is `Approved`.
 
   The one case where the persona is **not** updated is a refusal: on a workload something else owns, `approve` writes nothing at all, neither the Deployment patch nor the status patch that would trigger the persona write. See [the ownership model](/ownership-model).
 </Note>
@@ -97,8 +97,8 @@ All CRDs belong to the `dorgu.io/v1` API group.
 
 | Resource | Scope | Short name |
 |----------|-------|------------|
-| ApplicationPersona | Namespaced | — |
-| ClusterPersona | Cluster | — |
+| ApplicationPersona | Namespaced | none |
+| ClusterPersona | Cluster | none |
 | IncidentMemory | Namespaced | `im` |
 | RemediationAction | Namespaced | `ra` |
 | DorguEvent | Namespaced | `de` |
@@ -253,17 +253,17 @@ The ClusterPersona controller reconciles every 5 minutes, scanning nodes, namesp
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `true` | Not yet implemented — see the note below |
+| `enabled` | bool | `true` | Not yet implemented. See the note below |
 | `mode` | enum | `propose` | `observe`, `propose`, or `auto-approve` |
 | `trustLevel` | int | `2` | Progressive trust level, 0–5 |
 | `maxRemediationsPerHour` | int | `5` | Rate limit per persona |
 | `excludeNamespaces` | array | `[]` | Namespaces excluded from remediation |
 | `rollback.enabled` | bool | `true` | Cluster-level default: roll back on degradation |
-| `rollback.healthCheckAfter` | duration | — | How long to wait before verifying |
+| `rollback.healthCheckAfter` | duration | none | How long to wait before verifying |
 | `rollback.maxRetries` | int | `1` | Rollback attempt limit |
 
 <Note>
-  `mode` is enforced by the proposer: `observe` records the incident and proposes nothing, `propose` proposes with approval required, and `auto-approve` is **not implemented** — it is accepted but degraded to `propose` with a warning. `maxRemediationsPerHour` and `excludeNamespaces` are enforced by the safety checker. `enabled` and `trustLevel` are **not** enforced: `trustLevel` is only fed to the AI planner as context, and detection/diagnosis/proposal run regardless of `enabled` — use `mode: observe` to stop at diagnosis. The operator's auto-created persona uses `mode: propose`.
+  `mode` is enforced by the proposer: `observe` records the incident and proposes nothing, `propose` proposes with approval required, and `auto-approve` is **not implemented**. It is accepted but degraded to `propose` with a warning. `maxRemediationsPerHour` and `excludeNamespaces` are enforced by the safety checker. `enabled` and `trustLevel` are **not** enforced: `trustLevel` is only fed to the AI planner as context, and detection/diagnosis/proposal run regardless of `enabled`, so use `mode: observe` to stop at diagnosis. The operator's auto-created persona uses `mode: propose`.
 </Note>
 
 ## IncidentMemory
@@ -486,7 +486,7 @@ How the CLI prints these: [guardrail verdicts](/cli/commands/remediation#guardra
 | Field | Type | Description |
 |-------|------|-------------|
 | `phase` | enum | `Pending`, `Approved`, `Ticketed`, `Applying`, `Verifying`, `Completed`, `RolledBack`, `Failed`, `Rejected`, `Expired`, `Acknowledged` |
-| `approvedBy` | string | Who approved it — the CLI records `cli-user` |
+| `approvedBy` | string | Who approved it. Free text: the CLI records `cli-user` |
 | `approvedAt` | timestamp | When it was approved |
 | `appliedAt` | timestamp | When the patch was applied |
 | `verificationResult` | enum | `Healthy`, `Degraded`, `Unknown` |

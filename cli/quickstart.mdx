@@ -171,7 +171,7 @@ Within a few seconds the pod goes `OOMKilled`, then `CrashLoopBackOff`. Left alo
 
 ## 4. Watch Dorgu detect and diagnose it
 
-Wait one detection cycle — 30 seconds with the settings above — then:
+Wait one detection cycle (30 seconds with the settings above), then:
 
 ```bash
 dorgu health
@@ -200,7 +200,7 @@ dorgu remediation diff <remediation-name> -n demo
 
 This is the review surface: the plan summary, then each step in execution order with its rationale, risk level, whether it is auto-applied or advisory, and a YAML diff of the change. The first step raises the memory limit; the follow-up steps are advisory. See [`dorgu remediation`](/cli/commands/remediation#remediation-diff) for a full annotated example.
 
-## 6. Approve — and watch it heal
+## 6. Approve and watch it heal
 
 ```bash
 dorgu remediation approve <remediation-name> -n demo
@@ -221,10 +221,10 @@ The pod comes back `1/1 Running` with no new restarts. That is the aha.
 kubectl -n demo get incidentmemory,remediationaction
 ```
 
-The records persist in your cluster. Next time a similar problem appears, the planner has this incident — and whether this fix actually worked — as context.
+The records persist in your cluster. Next time a similar problem appears, the planner has this incident as context, along with whether this fix actually worked.
 
 <Note>
-  The remediation will read `Applying` or `Verifying` for the next ~10 minutes, and the incident stays open until then. That is the verification window: the operator re-runs detection at the end of it and automatically rolls the change back if health regressed. Your pod is already healthy — the wait is what makes the rollback guarantee real.
+  The remediation will read `Applying` or `Verifying` for the next ~10 minutes, and the incident stays open until then. That is the verification window: the operator re-runs detection at the end of it and automatically rolls the change back if health regressed. Your pod is already healthy. The wait is what makes the rollback guarantee real.
 </Note>
 
 ## Clean up

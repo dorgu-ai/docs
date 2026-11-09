@@ -47,12 +47,12 @@ dorgu cluster status -n prod-us-east
 
 The `cluster status` command reports the following cluster metadata discovered by the operator:
 
-- **Nodes and resource capacity** — node count, total CPU, memory, and allocatable resources
-- **Kubernetes version** — server version reported by the API server
-- **Platform type** — detected platform: Kind, Minikube, EKS, GKE, AKS, or generic
-- **Installed add-ons** — discovered components such as ArgoCD, Prometheus, cert-manager, ingress-nginx
-- **Namespace summary** — count and list of namespaces
-- **ApplicationPersona count** — number of ApplicationPersona resources across the cluster
+- **Nodes and resource capacity**: node count, total CPU, memory, and allocatable resources
+- **Kubernetes version**: server version reported by the API server
+- **Platform type**: detected platform: Kind, Minikube, EKS, GKE, AKS, or generic
+- **Installed add-ons**: discovered components such as ArgoCD, Prometheus, cert-manager, ingress-nginx
+- **Namespace summary**: count and list of namespaces
+- **ApplicationPersona count**: number of ApplicationPersona resources across the cluster
 
 <Note>
   Requires the Dorgu Operator installed on the cluster with the `ClusterPersona` CRD registered. See the [Operator installation guide](/operator/installation) for setup instructions.
