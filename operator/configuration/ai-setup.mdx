@@ -139,11 +139,11 @@ The operator calls the Anthropic API directly from its pod. On a private cluster
 ```bash
 # Keep AI diagnosis, drop the AI remediation planner
 helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  -n dorgu-system --reuse-values --set aiRemediation.enabled=false
+  -n dorgu-system --reset-then-reuse-values --set aiRemediation.enabled=false
 
 # Drop AI entirely
 helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  -n dorgu-system --reuse-values --set llm.provider=""
+  -n dorgu-system --reset-then-reuse-values --set llm.provider=""
 ```
 
 Either way the self-healing loop keeps running rule-based. Existing `RemediationAction` objects with `planSource: ai-anthropic` remain valid and reviewable; new proposals come back as `rule-based`.

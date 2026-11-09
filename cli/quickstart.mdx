@@ -74,7 +74,7 @@ kubectl create secret generic dorgu-llm -n dorgu-system \
   --from-literal=ANTHROPIC_API_KEY=sk-ant-...
 
 helm upgrade dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
-  -n dorgu-system --reuse-values \
+  -n dorgu-system --reset-then-reuse-values \
   --set llm.provider=claude \
   --set llm.existingSecret=dorgu-llm
 ```

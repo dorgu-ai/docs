@@ -419,7 +419,7 @@ dorgu persona import -n apps --all --apply
 # Give one of them a limit it cannot live within. Set it through Helm, so Helm
 # stays the only manager of that field. The values key is chart-specific;
 # `resources.limits.memory` is the common one.
-helm upgrade <release> <chart> -n apps --reuse-values \
+helm upgrade <release> <chart> -n apps --reset-then-reuse-values \
   --set resources.limits.memory=32Mi
 
 # One detection cycle later
@@ -445,7 +445,7 @@ Pick a limit the container genuinely cannot live within. If the pod comes back h
 The diff names the Helm release, shows the Deployment change, and offers `--no-heal` and `reject` instead of `approve`. Apply the fix where that chart's values live, then run your usual upgrade and record the decision:
 
 ```bash
-helm upgrade <release> <chart> -n apps --reuse-values \
+helm upgrade <release> <chart> -n apps --reset-then-reuse-values \
   --set resources.limits.memory=128Mi
 
 dorgu remediation approve <remediation-name> -n apps --no-heal
