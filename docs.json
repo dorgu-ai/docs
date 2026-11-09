@@ -19,6 +19,7 @@
               "index",
               "cli/installation",
               "cli/quickstart",
+              "upgrade-guide",
               "changelog"
             ]
           },
@@ -29,6 +30,7 @@
               "cli/commands/health",
               "cli/commands/incidents",
               "cli/commands/remediation",
+              "cli/commands/report",
               "cli/commands/persona",
               "cli/commands/cluster",
               "cli/commands/version"
@@ -54,6 +56,7 @@
               "cli/architecture/data-flow",
               "cli/architecture/crds",
               "cli/architecture/trust-model",
+              "how-dorgu-decides",
               "ownership-model",
               "security-and-permissions"
             ]
@@ -68,7 +71,8 @@
             "pages": [
               "operator/index",
               "operator/installation",
-              "operator/quickstart"
+              "operator/quickstart",
+              "upgrade-guide"
             ]
           },
           {
@@ -83,12 +87,18 @@
             "group": "Features",
             "pages": [
               "operator/features/self-healing",
+              "how-dorgu-decides",
               "ownership-model",
               "operator/features/validation",
               "operator/features/cluster-discovery",
               "operator/features/argocd",
-              "operator/features/prometheus",
-              "operator/features/websocket"
+              "operator/features/prometheus"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "operator/reference/metrics"
             ]
           },
           {
@@ -166,7 +176,8 @@
     { "source": "/cli/guides/gitops-mode", "destination": "/ownership-model" },
     { "source": "/cli/guides/ci-cd-integration", "destination": "/cli/commands/health" },
     { "source": "/cli/architecture/cli-pipeline", "destination": "/cli/architecture/overview" },
-    { "source": "/operator/features/webhook", "destination": "/operator/features/validation" }
+    { "source": "/operator/features/webhook", "destination": "/operator/features/validation" },
+    { "source": "/operator/features/websocket", "destination": "/upgrade-guide" }
   ],
   "contextual": {
     "options": [
