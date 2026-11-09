@@ -59,11 +59,37 @@ The command above resolves the newest published chart. To pin an exact version f
 helm install dorgu-operator oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator \
   --namespace dorgu-system \
   --create-namespace \
-  --version 0.13.0
+  --version 0.13.1
 ```
 
 <Note>
-  The chart version and the operator version are the same number, so `--version 0.13.0` installs operator `v0.13.0`. If the literal above has fallen behind, [Versions](#versions) is the statement to trust on this page, and [operator releases](https://github.com/dorgu-ai/dorgu-operator/releases) is the statement to trust over both.
+  The chart version and the operator version are the same number, so `--version 0.13.1` installs operator `v0.13.1`. If the literal above has fallen behind, [Versions](#versions) is the statement to trust on this page, and [operator releases](https://github.com/dorgu-ai/dorgu-operator/releases) is the statement to trust over both.
+</Note>
+
+### Verify what you install (build provenance)
+
+Releases from **v0.13.1** carry a [build provenance attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) for the operator image and for the chart archive, signed by the release workflow of `dorgu-ai/dorgu-operator`. From **0.13.2**, the chart as it sits in the registry is attested too. Check them with the [GitHub CLI](https://cli.github.com/) before you install. A passing check says the artifact was built by that workflow from a tagged commit, and the output names the commit.
+
+```bash
+VERSION=0.13.1
+
+# The image: the manifest list the tag points at
+gh attestation verify oci://ghcr.io/dorgu-ai/dorgu-operator:${VERSION} --owner dorgu-ai
+
+# The chart archive from the GitHub release
+gh release download v${VERSION} --repo dorgu-ai/dorgu-operator --pattern 'dorgu-operator-*.tgz'
+gh attestation verify dorgu-operator-${VERSION}.tgz --owner dorgu-ai
+```
+
+From 0.13.2, also check the chart in the registry, which is what `helm install oci://...` pulls:
+
+```bash
+VERSION=0.13.2
+gh attestation verify oci://ghcr.io/dorgu-ai/dorgu-operator-charts/dorgu-operator:${VERSION} --owner dorgu-ai
+```
+
+<Note>
+  **0.13.1's registry chart attestation did not complete.** In the 0.13.1 release run, the step that attests the chart in the registry failed with `No credentials found for registry ghcr.io`, and the release workflow flagged it. The release itself, the image, the chart and the archive, published correctly, and the image and the chart archive are attested. For 0.13.1, verify those two, and do not rely on the registry check above until 0.13.2. Releases before v0.13.1 have no attestation at all: `gh attestation verify` answers 404 for them.
 </Note>
 
 ### Install with a values file
@@ -107,7 +133,7 @@ cd dorgu-operator
 make install
 
 # Deploy the operator
-make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.13.0
+make deploy IMG=ghcr.io/dorgu-ai/dorgu-operator:0.13.1
 ```
 
 To reverse it:

@@ -7,7 +7,7 @@ description: Print a local summary of how the loop is doing on this cluster, as 
 
 `dorgu report` answers "is this working here?" from the cluster's own records. It reads `RemediationAction`, `IncidentMemory`, persona and Event resources, computes the numbers below for a time window, and prints them. It sends nothing anywhere. If you are a design partner, the output is what you paste to the Dorgu team.
 
-It is read-only and needs **CLI v0.14.0**. The heal and refusal sections need **operator v0.13.0** or newer, which is the release that writes the records they are computed from.
+It is read-only and needs **CLI v0.14.0**. The heal and refusal sections need **operator v0.13.0** or newer, which is the release that writes the records they are computed from. To count a refusal that has since cleared, as described under [refusals are counted after they clear](#refusals-are-counted-after-they-clear), use **CLI v0.14.1** with **operator v0.13.1**.
 
 <Note>
   **It never prints a zero for something it could not measure.** A figure with no sample behind it reads `no data` (`null` with `no_data: true` in JSON). A cluster read that fails is named in the output, and every section that depends on it says `no data` with the reason. A zero in this report is a measurement.
@@ -46,7 +46,7 @@ dorgu report -n production
 | **Active cluster, review depth, approval rate** | Whether any proposal was decided in the window, decisions per week, and approved against rejected. Below 5 decisions it prints the counts and says `too few decisions` instead of a rate. Beyond that, an approval rate under 30% reads as noisy proposals and over 80% as possible rubber-stamping. |
 | **Time to heal** | p50 and p90 for detect to proposal, proposal to decision (human time), decision to applied, and applied to verified. Detect to proposal is measured once per incident, to its first proposal. |
 | **Proposal precision** | The share of decided proposals rejected with the reason `wrong-diagnosis`, and a breakdown of every other reason. See [`remediation reject`](/cli/commands/remediation#remediation-reject). |
-| **Refusal mix** | What the gate refused, by phase (proposal, approval, apply), stage and reason, with each reason's share of proposals. A reason over 30% of proposals, on at least 10 proposals, is flagged. An outstanding proposal is shown separately as `deferred`, because it is waiting for a decision and is not a refusal. |
+| **Refusal mix** | What the gate refused, by phase (proposal, approval, apply), stage and reason, with each reason's share of proposals. A reason over 30% of proposals, on at least 10 proposals, is flagged. A refusal is counted once per incident, even after the incident resolves or a later proposal answers it. See [refusals are counted after they clear](#refusals-are-counted-after-they-clear). A deferral (an outstanding proposal) is not a refusal, and the report says it is [not recorded on cluster objects](#deferrals-are-not-counted-here). |
 | **First-run clamps** | How many proposals had a value narrowed by a guardrail before you saw the plan, by guardrail. |
 | **CLI declines** | Times `approve` or `heal` declined, by reason. Kubernetes keeps Events for about an hour, so declines older than that are not counted. |
 | **Not measurable from a cluster** | The measures a cluster cannot report (external installs, design partners, time to first value, retention, and similar), listed so their absence is not read as zero. |
@@ -55,7 +55,7 @@ The text output labels some lines with short IDs (`A2`, `A5`, `A6`, `Q1`, `Q2`, 
 
 ## Example output
 
-This is real output from the report's own test fixture, with the cluster name changed. Your numbers will differ. Long lines are shortened with `...`.
+This is the shape of the report's own test fixture, with the cluster name changed and the deferral line updated for CLI v0.14.1. Your numbers will differ. Long lines are shortened with `...`.
 
 ```text
 Dorgu report (dorgu.report/v1)
@@ -105,7 +105,7 @@ Tier Q: operational quality
     approval  Guardrails     BlastRadius                1  (7.1%)
     proposal  Ground         WorkloadGone               1  (7.1%)
     proposal  ModePolicy     SelfHealingMode            1  (7.1%)
-    not refusals: 1 incident(s) with a proposal waiting for a decision (counted neither as refusals nor as proposals)
+    deferred proposals: not recorded on cluster objects (see the dorgu_gate_decisions_total metric, result=deferred)
 
 First-run clamps (spec.steps[].safety and status.gate)
   proposals with a clamped value: 1
@@ -327,7 +327,8 @@ Where there is no sample, a line reads `no data (reason)`. In the example, `Q3` 
           "flagged": false
         }
       ],
-      "deferred_proposals": 1
+      "deferred_proposals": null,
+      "deferred_note": "not recorded on cluster objects (see the dorgu_gate_decisions_total metric, result=deferred)"
     }
   },
   "first_run_clamps": {
@@ -377,7 +378,7 @@ The example shortens the long text fields and lists only two of the `not_measura
 | `input_errors` | One `{input, error}` entry per failed read. `error` is one of `forbidden`, `not_found`, `timeout`, `unparseable`, `error` |
 | `heal_accounting` | `total`, `completed`, `clean` and `safe_heals` (both `null` when they cannot be known), `no_data` with `reason`, `excluded` (a count per bucket, zeros included), and `heal_not_credited_by_reason` |
 | `tier_a` | `ns_safe_heals` (`safe_heals`, `clean_heals`, `no_data`, `reason`), `a2_active_cluster` (`active`, `proposals_decided`), `a5_review_depth` (`per_week`, `window_days`), `a6_approval_rate` (`approved`, `rejected`, `rate`, `too_few_decisions`, `band`), `a7_external_agent_share`, `decisions` and `notes` |
-| `tier_q` | `q1_time_to_heal` (`detect_to_proposal`, `proposal_to_decision`, `decision_to_applied`, `applied_to_verified`, each `n`, `p50_seconds`, `p90_seconds`, `no_data`), `q2_proposal_precision` (`decided`, `wrong`, `rate`, `rejections_by_reason`), `q3_llm_efficiency` (`plan_sources`), `q6_refusal_mix` (`proposals`, `rows[]` of `phase`, `stage`, `reason`, `count`, `share_of_proposals`, `flagged`, and `deferred_proposals`) |
+| `tier_q` | `q1_time_to_heal` (`detect_to_proposal`, `proposal_to_decision`, `decision_to_applied`, `applied_to_verified`, each `n`, `p50_seconds`, `p90_seconds`, `no_data`), `q2_proposal_precision` (`decided`, `wrong`, `rate`, `rejections_by_reason`), `q3_llm_efficiency` (`plan_sources`), `q6_refusal_mix` (`proposals`, `rows[]` of `phase`, `stage`, `reason`, `count`, `share_of_proposals`, `flagged`, `deferred_proposals` and `deferred_note`) |
 | `first_run_clamps` | `proposals_with_clamp`, `step_verdicts`, `clamps_by_rule`, `gate_clamps_by_guardrail`, `no_data` |
 | `cli_declines` | `by_reason` (event reason to count), `no_data`, and a `note` on the one-hour Event retention |
 | `not_measurable` | `{id, name, reason}` entries |
@@ -385,6 +386,27 @@ The example shortens the long text fields and lists only two of the `not_measura
 <Warning>
   **Check `no_data` before you read a number.** `clean`, `safe_heals`, a percentile or a rate is `null` when it cannot be known, and `no_data` is `true` with a `reason`. A script that treats `null` as `0` will report a failure to read as a fact.
 </Warning>
+
+### Refusals are counted after they clear
+
+**CLI v0.14.1 with operator v0.13.1.** A refusal used to disappear from the report. The operator records a refusal at proposal time as the live `ProposalRefused` condition on the incident, and rewrites it to `False` when the incident resolves or when a later proposal answers it. A report run after that point showed an empty refusal mix beside refusals that had really happened.
+
+The operator now also writes `ProposalRefusalRecorded`: status `True`, the same `<Stage>_<Reason>` reason, the time of the latest refusal, and a fixed message with no plan text. Nothing clears it. The report counts a refusal from it, **once per incident**, however often the incident was refused. A refusal that was answered by a later proposal is still a refusal, and that RemediationAction is the one proposal in the denominator.
+
+Two limits:
+
+- **A refusal an older operator already cleared cannot be recovered.** Against an operator older than v0.13.1, the report reads the live `ProposalRefused` condition as before, so a refusal that has already cleared is missing from it.
+- **A CLI older than v0.14.1 ignores the new condition,** even against operator v0.13.1.
+
+When both conditions are present, the report dates the refusal by the later of the two, so a refusal that came back is inside the window.
+
+### Deferrals are not counted here
+
+An outstanding proposal answers an incident again every health cycle, so the operator deliberately records a deferral on no cluster object. The report therefore **cannot know** how many there were, and from CLI v0.14.1 it does not print a number for it:
+
+- Text: `deferred proposals: not recorded on cluster objects (see the dorgu_gate_decisions_total metric, result=deferred)`. The number is in the metric, [`dorgu_gate_decisions_total`](/operator/reference/metrics) with `result="deferred"`.
+- JSON: `tier_q.q6_refusal_mix.deferred_proposals` is **`null`**, not `0`, and `deferred_note` is always present. Before v0.14.1 the field was `0` when no deferral was found, which was a claim the report could not make. **A script that read it as an integer must accept `null`.**
+- Against an operator from before v0.13.0 that left deferrals on incidents, the number is still reported as a floor, beside the note.
 
 ### The operator line in the header
 
